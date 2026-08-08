@@ -3102,6 +3102,12 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
 
     private void HandleKeyDownCore(KeyEventArgs e)
     {
+        if (_markModeActive)
+        {
+            HandleMarkModeKeyDown(e);
+            return;
+        }
+
         if (e.Key == Key.Escape && HasRendererSelection())
         {
             ClearSelection();
@@ -3244,6 +3250,12 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
 
     private void HandleTextInputCore(TextInputEventArgs e)
     {
+        if (_markModeActive)
+        {
+            e.Handled = true;
+            return;
+        }
+
         FlushPendingTransportResize();
         if (TerminalInputAdapter.HandleTextInput(e, TerminalSessionService))
         {
@@ -3363,6 +3375,10 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
     private void HandlePointerPressedCore(PointerPressedEventArgs e)
     {
         Focus();
+        if (_markModeActive)
+        {
+            ExitMarkMode(clearSelection: false);
+        }
 
         Point controlPoint = e.GetPosition(this);
         PointerPointProperties props = e.GetCurrentPoint(this).Properties;
@@ -5337,6 +5353,430 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
     {
         ScrollToBottomCore(clearPreservedRestartHistoryInputScrollGuard: true);
     }
+
+    #region Mark mode (keyboard selection)
+
+    private bool _markModeActive;
+    private int _markCursorAbsoluteRow;
+    private int _markCursorColumn;
+    private bool _markAnchorActive;
+    private int _markAnchorAbsoluteRow;
+    private int _markAnchorColumn;
+
+    /// <summary>Gets whether keyboard mark mode is active.</summary>
+    public bool IsMarkModeActive => _markModeActive;
+
+    /// <summary>Raised when mark mode is entered (true) or left (false).</summary>
+    public event EventHandler<bool>? MarkModeChanged;
+
+    /// <summary>
+    /// Toggles keyboard mark mode: a keyboard cursor navigates the buffer
+    /// (arrows or vi keys), v anchors a selection, y/Enter copies
+    /// (Windows Terminal "markMode").
+    /// </summary>
+    public void ToggleMarkMode()
+    {
+        if (_markModeActive)
+        {
+            ExitMarkMode(clearSelection: true);
+            return;
+        }
+
+        if (_screen is null || _renderer is null)
+        {
+            return;
+        }
+
+        lock (_screen.SyncRoot)
+        {
+            int viewportTop = GetViewportTopAbsoluteRowLocked();
+            int cursorRow = Math.Clamp(_vtProcessor?.CursorRow ?? 0, 0, Math.Max(0, _screen.ViewportRows - 1));
+            int cursorColumn = Math.Clamp(_vtProcessor?.CursorCol ?? 0, 0, Math.Max(0, _screen.Columns - 1));
+            _markCursorAbsoluteRow = viewportTop + cursorRow;
+            _markCursorColumn = cursorColumn;
+        }
+
+        _markModeActive = true;
+        _markAnchorActive = false;
+        UpdateMarkSelection();
+        MarkModeChanged?.Invoke(this, true);
+    }
+
+    /// <summary>
+    /// Leaves mark mode, optionally clearing the selection highlight.
+    /// </summary>
+    public void ExitMarkMode(bool clearSelection)
+    {
+        if (!_markModeActive)
+        {
+            return;
+        }
+
+        _markModeActive = false;
+        _markAnchorActive = false;
+        if (clearSelection)
+        {
+            ClearSelection();
+        }
+
+        MarkModeChanged?.Invoke(this, false);
+    }
+
+    private void HandleMarkModeKeyDown(KeyEventArgs e)
+    {
+        int page = Math.Max(1, Rows - 1);
+        switch (e.Key)
+        {
+            case Key.Escape:
+                ExitMarkMode(clearSelection: true);
+                break;
+            case Key.Q:
+                ExitMarkMode(clearSelection: true);
+                break;
+            case Key.Left:
+            case Key.H:
+                MoveMarkCursor(0, -1);
+                break;
+            case Key.Right:
+            case Key.L:
+                MoveMarkCursor(0, 1);
+                break;
+            case Key.Up:
+            case Key.K:
+                MoveMarkCursor(-1, 0);
+                break;
+            case Key.Down:
+            case Key.J:
+                MoveMarkCursor(1, 0);
+                break;
+            case Key.Home:
+            case Key.D0:
+                SetMarkCursorColumn(0);
+                break;
+            case Key.End:
+            case Key.D4 when e.KeyModifiers.HasFlag(KeyModifiers.Shift): // $
+                SetMarkCursorColumn(int.MaxValue);
+                break;
+            case Key.PageUp:
+                MoveMarkCursor(-page, 0);
+                break;
+            case Key.PageDown:
+                MoveMarkCursor(page, 0);
+                break;
+            case Key.G when e.KeyModifiers.HasFlag(KeyModifiers.Shift):
+                MoveMarkCursorToEdge(top: false);
+                break;
+            case Key.G:
+                MoveMarkCursorToEdge(top: true);
+                break;
+            case Key.W:
+                MoveMarkCursorByWord(forward: true);
+                break;
+            case Key.B:
+                MoveMarkCursorByWord(forward: false);
+                break;
+            case Key.V:
+            case Key.Space:
+                _markAnchorActive = !_markAnchorActive;
+                if (_markAnchorActive)
+                {
+                    _markAnchorAbsoluteRow = _markCursorAbsoluteRow;
+                    _markAnchorColumn = _markCursorColumn;
+                }
+
+                UpdateMarkSelection();
+                break;
+            case Key.Y:
+            case Key.Enter:
+                _ = CopySelectionAsync();
+                ExitMarkMode(clearSelection: false);
+                break;
+            case Key.LeftShift:
+            case Key.RightShift:
+            case Key.LeftCtrl:
+            case Key.RightCtrl:
+            case Key.LeftAlt:
+            case Key.RightAlt:
+                return; // bare modifiers pass through without ending the mode
+            default:
+                break; // swallow everything else while marking
+        }
+
+        e.Handled = true;
+    }
+
+    private void MoveMarkCursor(int rowDelta, int columnDelta)
+    {
+        if (_screen is null)
+        {
+            return;
+        }
+
+        _markCursorAbsoluteRow += rowDelta;
+        int columns = Math.Max(1, _screen.Columns);
+        int column = _markCursorColumn + columnDelta;
+        if (column < 0)
+        {
+            column = columns - 1;
+            _markCursorAbsoluteRow--;
+        }
+        else if (column >= columns)
+        {
+            column = 0;
+            _markCursorAbsoluteRow++;
+        }
+
+        _markCursorColumn = column;
+        EnsureMarkCursorVisible();
+        UpdateMarkSelection();
+    }
+
+    private void SetMarkCursorColumn(int column)
+    {
+        if (_screen is null)
+        {
+            return;
+        }
+
+        _markCursorColumn = Math.Clamp(column, 0, Math.Max(0, _screen.Columns - 1));
+        UpdateMarkSelection();
+    }
+
+    private void MoveMarkCursorToEdge(bool top)
+    {
+        if (_screen is null)
+        {
+            return;
+        }
+
+        ScrollByRows(top ? -1_000_000 : 1_000_000);
+        lock (_screen.SyncRoot)
+        {
+            int viewportTop = GetViewportTopAbsoluteRowLocked();
+            _markCursorAbsoluteRow = top ? viewportTop : viewportTop + Math.Max(0, _screen.ViewportRows - 1);
+        }
+
+        UpdateMarkSelection();
+    }
+
+    private void MoveMarkCursorByWord(bool forward)
+    {
+        if (_screen is null)
+        {
+            return;
+        }
+
+        lock (_screen.SyncRoot)
+        {
+            int viewportTop = GetViewportTopAbsoluteRowLocked();
+            int viewportRow = _markCursorAbsoluteRow - viewportTop;
+            if ((uint)viewportRow >= (uint)_screen.ViewportRows)
+            {
+                return;
+            }
+
+            TerminalRow row = _screen.GetViewportRow(viewportRow);
+            int columns = Math.Max(1, _screen.Columns);
+            int column = _markCursorColumn;
+            int step = forward ? 1 : -1;
+
+            bool IsSpace(int c)
+            {
+                if ((uint)c >= (uint)row.ReadOnlyCells.Length)
+                {
+                    return true;
+                }
+
+                ref readonly TerminalCell cell = ref row.ReadOnlyCells[c];
+                return cell.Width == 0 || cell.Codepoint == 0 || cell.Codepoint == ' ';
+            }
+
+            column += step;
+            while (column > 0 && column < columns - 1 && !IsSpace(column))
+            {
+                column += step;
+            }
+
+            while (column > 0 && column < columns - 1 && IsSpace(column))
+            {
+                column += step;
+            }
+
+            _markCursorColumn = Math.Clamp(column, 0, columns - 1);
+        }
+
+        UpdateMarkSelection();
+    }
+
+    private void EnsureMarkCursorVisible()
+    {
+        if (_screen is null)
+        {
+            return;
+        }
+
+        int viewportTop;
+        int viewportRows;
+        lock (_screen.SyncRoot)
+        {
+            viewportTop = GetViewportTopAbsoluteRowLocked();
+            viewportRows = _screen.ViewportRows;
+        }
+
+        if (_markCursorAbsoluteRow < viewportTop)
+        {
+            ScrollByRows(_markCursorAbsoluteRow - viewportTop);
+        }
+        else if (_markCursorAbsoluteRow > viewportTop + viewportRows - 1)
+        {
+            ScrollByRows(_markCursorAbsoluteRow - (viewportTop + viewportRows - 1));
+        }
+
+        lock (_screen.SyncRoot)
+        {
+            int clampedTop = GetViewportTopAbsoluteRowLocked();
+            _markCursorAbsoluteRow = Math.Clamp(
+                _markCursorAbsoluteRow,
+                clampedTop,
+                clampedTop + Math.Max(0, _screen.ViewportRows - 1));
+        }
+    }
+
+    /// <summary>
+    /// Projects the mark cursor/anchor into the anchored-selection model so
+    /// the existing renderer pipeline highlights it.
+    /// </summary>
+    private void UpdateMarkSelection()
+    {
+        if (_screen is null || _renderer is null)
+        {
+            return;
+        }
+
+        if (_markAnchorActive)
+        {
+            _selectionAnchorAbsoluteRow = _markAnchorAbsoluteRow;
+            _selectionAnchorColumn = _markAnchorColumn;
+        }
+        else
+        {
+            _selectionAnchorAbsoluteRow = _markCursorAbsoluteRow;
+            _selectionAnchorColumn = _markCursorColumn;
+        }
+
+        _selectionActiveAbsoluteRow = _markCursorAbsoluteRow;
+        _selectionActiveColumn = _markCursorColumn + 1;
+        _hasAnchoredSelection = true;
+        SetSelectionAnchorSpans(Array.Empty<TerminalHighlightSpan>());
+        lock (_screen.SyncRoot)
+        {
+            ApplyAnchoredSelectionToRendererLocked();
+        }
+
+        InvalidateScreen();
+        _presenter?.Invalidate();
+    }
+
+    #endregion
+
+    #region Viewport links (keyboard hints)
+
+    /// <summary>
+    /// A link visible in the viewport: cell span plus resolved URL.
+    /// </summary>
+    /// <param name="ViewportRow">0-based viewport row.</param>
+    /// <param name="StartColumn">First cell column of the link.</param>
+    /// <param name="EndColumn">Last cell column of the link (inclusive).</param>
+    /// <param name="Url">Resolved absolute URL.</param>
+    public readonly record struct TerminalViewportLink(int ViewportRow, int StartColumn, int EndColumn, string Url);
+
+    /// <summary>
+    /// Enumerates links visible in the viewport (OSC 8 hyperlinks and
+    /// detected plain-text URLs) for keyboard hint overlays.
+    /// </summary>
+    public IReadOnlyList<TerminalViewportLink> GetViewportLinks()
+    {
+        List<TerminalViewportLink> links = [];
+        if (_screen is null)
+        {
+            return links;
+        }
+
+        lock (_screen.SyncRoot)
+        {
+            int columns = _screen.Columns;
+            for (int viewportRow = 0; viewportRow < _screen.ViewportRows; viewportRow++)
+            {
+                TerminalRow row = _screen.GetViewportRow(viewportRow);
+                int column = 0;
+                while (column < columns)
+                {
+                    int hyperlinkId = (uint)column < (uint)row.ReadOnlyCells.Length
+                        ? row.ReadOnlyCells[column].HyperlinkId
+                        : 0;
+                    if (hyperlinkId > 0 && _screen.TryGetHyperlinkUrl(hyperlinkId, out string? explicitUrl) &&
+                        !string.IsNullOrWhiteSpace(explicitUrl))
+                    {
+                        int end = column;
+                        while (end + 1 < columns &&
+                               (uint)(end + 1) < (uint)row.ReadOnlyCells.Length &&
+                               row.ReadOnlyCells[end + 1].HyperlinkId == hyperlinkId)
+                        {
+                            end++;
+                        }
+
+                        links.Add(new TerminalViewportLink(viewportRow, column, end, explicitUrl!));
+                        column = end + 1;
+                        continue;
+                    }
+
+                    if (TryResolveLinkTokenSpanLocked(row, column, out int tokenStart, out int tokenEnd))
+                    {
+                        if (TryReadLinkTokenTextLocked(row, tokenStart, tokenEnd, out string token) &&
+                            TryNormalizeHoveredLinkToken(token, out string normalized))
+                        {
+                            links.Add(new TerminalViewportLink(viewportRow, tokenStart, tokenEnd, normalized));
+                        }
+
+                        column = tokenEnd + 1;
+                        continue;
+                    }
+
+                    column++;
+                }
+            }
+        }
+
+        return links;
+    }
+
+    /// <summary>
+    /// Gets the control-space rectangle of a viewport cell, for positioning
+    /// overlays (e.g. link hint labels).
+    /// </summary>
+    public bool TryGetViewportCellRect(int viewportRow, int column, out Rect rect)
+    {
+        rect = default;
+        if (_renderer is null)
+        {
+            return false;
+        }
+
+        Rect content = GetTerminalContentRect(Bounds.Size);
+        if (content.Width <= 0 || content.Height <= 0)
+        {
+            return false;
+        }
+
+        rect = new Rect(
+            content.X + column * _renderer.CellWidth,
+            content.Y + viewportRow * _renderer.CellHeight,
+            _renderer.CellWidth,
+            _renderer.CellHeight);
+        return true;
+    }
+
+    #endregion
 
     private void ScrollToBottomCore(bool clearPreservedRestartHistoryInputScrollGuard)
     {

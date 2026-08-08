@@ -155,6 +155,7 @@ internal sealed class MainWindowController
         MainWindowViewModel viewModel,
         ITerminalPaneSplitPolicy? paneSplitPolicy = null,
         ITerminalSessionProfileStore? settingsProfileStore = null,
+        ITerminalWorkspaceStore? workspaceStore = null,
         IAppPreferencesStore? appPreferencesStore = null)
         : this(
             window,
@@ -162,6 +163,7 @@ internal sealed class MainWindowController
             new TerminalModeCapabilityResolver(),
             TerminalModeResolver.Default,
             settingsProfileStore: settingsProfileStore,
+            workspaceStore: workspaceStore,
             paneSplitPolicy: paneSplitPolicy,
             appPreferencesStore: appPreferencesStore)
     {
@@ -658,6 +660,18 @@ internal sealed class MainWindowController
         disposables.Add(_viewModel.ToggleBroadcastInputInteraction.RegisterHandler(context =>
         {
             ToggleBroadcastInput();
+            context.SetOutput(Unit.Default);
+        }));
+
+        disposables.Add(_viewModel.ToggleMarkModeInteraction.RegisterHandler(context =>
+        {
+            ToggleMarkMode();
+            context.SetOutput(Unit.Default);
+        }));
+
+        disposables.Add(_viewModel.ToggleLinkHintsInteraction.RegisterHandler(context =>
+        {
+            ToggleLinkHints();
             context.SetOutput(Unit.Default);
         }));
 
@@ -3821,6 +3835,7 @@ internal sealed class MainWindowController
             {
                 if (visible)
                 {
+                    _viewModel.SetDynamicCommandPaletteItems(BuildDynamicPaletteItems());
                     Dispatcher.UIThread.Post(() =>
                     {
                         paletteBox.Focus();
@@ -3865,6 +3880,34 @@ internal sealed class MainWindowController
                 _viewModel.ExecuteCommandPaletteItem(item);
             }
         }, RoutingStrategies.Bubble);
+    }
+
+    /// <summary>
+    /// Builds context-dependent palette entries: switch-to-tab per open tab
+    /// and new-tab per launch profile.
+    /// </summary>
+    private List<CommandPaletteItem> BuildDynamicPaletteItems()
+    {
+        List<CommandPaletteItem> items = [];
+        foreach (TerminalTab tab in _tabs)
+        {
+            items.Add(new CommandPaletteItem(
+                $"Switch to Tab: {tab.Title}",
+                null,
+                _viewModel.ActivateTabCommand,
+                tab.Index));
+        }
+
+        foreach (SessionLaunchOption option in _viewModel.SessionLaunchOptions)
+        {
+            items.Add(new CommandPaletteItem(
+                $"New Tab: {option.DisplayName}",
+                null,
+                _viewModel.LaunchSessionProfileCommand,
+                option));
+        }
+
+        return items;
     }
 
     /// <summary>
@@ -4392,6 +4435,229 @@ internal sealed class MainWindowController
     private bool _broadcastRelayInProgress;
 
     /// <summary>
+    /// Toggles keyboard mark mode on the active pane, with status guidance.
+    /// </summary>
+    private void ToggleMarkMode()
+    {
+        TerminalControl? control = GetActiveStandaloneControl();
+        if (control is null)
+        {
+            return;
+        }
+
+        control.ToggleMarkMode();
+        UpdateStatus(control.IsMarkModeActive
+            ? "Mark mode — arrows/hjkl move, w/b word, g/G edges, v selects, y/Enter copies, Esc exits."
+            : "Mark mode off.");
+        control.Focus();
+    }
+
+    private Canvas? _linkHintsCanvas;
+    private TerminalControl? _linkHintsControl;
+    private readonly Dictionary<string, string> _linkHintsByLabel = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<TextBlock> _linkHintLabels = [];
+    private string _linkHintsInput = string.Empty;
+    private EventHandler<KeyEventArgs>? _linkHintsKeyHandler;
+
+    /// <summary>
+    /// Toggles keyboard link hints: labels every visible link in the active
+    /// pane; typing a label opens it (Kitty hints / WezTerm quick-select
+    /// style).
+    /// </summary>
+    private void ToggleLinkHints()
+    {
+        if (_linkHintsCanvas is not null)
+        {
+            CloseLinkHints();
+            return;
+        }
+
+        TerminalControl? control = GetActiveStandaloneControl();
+        if (control is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<TerminalControl.TerminalViewportLink> links = control.GetViewportLinks();
+        if (links.Count == 0)
+        {
+            UpdateStatus("No links visible in this pane.");
+            return;
+        }
+
+        Canvas canvas = new()
+        {
+            IsHitTestVisible = false,
+        };
+        _linkHintsByLabel.Clear();
+        _linkHintLabels.Clear();
+        _linkHintsInput = string.Empty;
+
+        IReadOnlyList<string> labels = BuildHintLabels(links.Count);
+        for (int i = 0; i < links.Count; i++)
+        {
+            TerminalControl.TerminalViewportLink link = links[i];
+            if (!control.TryGetViewportCellRect(link.ViewportRow, link.StartColumn, out Rect cellRect))
+            {
+                continue;
+            }
+
+            Point? anchor = control.TranslatePoint(cellRect.TopLeft, _terminalHost);
+            if (anchor is null)
+            {
+                continue;
+            }
+
+            string label = labels[i];
+            _linkHintsByLabel[label] = link.Url;
+
+            TextBlock text = new()
+            {
+                Text = label.ToUpperInvariant(),
+                FontSize = 12,
+                FontWeight = FontWeight.Bold,
+                Foreground = Brushes.Black,
+                Tag = label,
+            };
+            _linkHintLabels.Add(text);
+            Border badge = new()
+            {
+                Child = text,
+                Background = new SolidColorBrush(Color.FromRgb(0xE5, 0xA5, 0x0A)),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(4, 0),
+                BorderBrush = Brushes.Black,
+                BorderThickness = new Thickness(1),
+            };
+            ToolTip.SetTip(badge, link.Url);
+            Canvas.SetLeft(badge, Math.Max(0, anchor.Value.X - 2));
+            Canvas.SetTop(badge, Math.Max(0, anchor.Value.Y - 4));
+            canvas.Children.Add(badge);
+        }
+
+        if (canvas.Children.Count == 0)
+        {
+            UpdateStatus("No links visible in this pane.");
+            return;
+        }
+
+        _linkHintsCanvas = canvas;
+        _linkHintsControl = control;
+        _terminalHost.Children.Add(canvas);
+
+        _linkHintsKeyHandler = OnLinkHintsKeyDown;
+        _window.AddHandler(InputElement.KeyDownEvent, _linkHintsKeyHandler, RoutingStrategies.Tunnel, handledEventsToo: true);
+        UpdateStatus($"Link hints — type a label to open ({_linkHintsByLabel.Count} links), Esc cancels.");
+    }
+
+    private void OnLinkHintsKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            CloseLinkHints();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key is >= Key.A and <= Key.Z)
+        {
+            _linkHintsInput += char.ToLowerInvariant((char)('a' + (e.Key - Key.A)));
+            if (_linkHintsByLabel.TryGetValue(_linkHintsInput, out string? url))
+            {
+                CloseLinkHints();
+                OpenHintedLink(url);
+            }
+            else if (!_linkHintsByLabel.Keys.Any(label => label.StartsWith(_linkHintsInput, StringComparison.OrdinalIgnoreCase)))
+            {
+                CloseLinkHints();
+            }
+            else
+            {
+                foreach (TextBlock label in _linkHintLabels)
+                {
+                    string value = (string)label.Tag!;
+                    label.Opacity = value.StartsWith(_linkHintsInput, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.25;
+                }
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt)
+        {
+            return;
+        }
+
+        CloseLinkHints();
+        e.Handled = true;
+    }
+
+    private void OpenHintedLink(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri))
+        {
+            return;
+        }
+
+        _ = _window.Launcher.LaunchUriAsync(uri);
+        UpdateStatus($"Opening {url}");
+    }
+
+    private void CloseLinkHints()
+    {
+        if (_linkHintsCanvas is not null)
+        {
+            _terminalHost.Children.Remove(_linkHintsCanvas);
+            _linkHintsCanvas = null;
+        }
+
+        if (_linkHintsKeyHandler is not null)
+        {
+            _window.RemoveHandler(InputElement.KeyDownEvent, _linkHintsKeyHandler);
+            _linkHintsKeyHandler = null;
+        }
+
+        _linkHintsByLabel.Clear();
+        _linkHintLabels.Clear();
+        _linkHintsInput = string.Empty;
+        _linkHintsControl?.Focus();
+        _linkHintsControl = null;
+    }
+
+    /// <summary>
+    /// Builds home-row hint labels: single keys first, then two-key combos.
+    /// </summary>
+    private static IReadOnlyList<string> BuildHintLabels(int count)
+    {
+        const string Keys = "asdfghjkl";
+        List<string> labels = [];
+        if (count <= Keys.Length)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                labels.Add(Keys[i].ToString());
+            }
+
+            return labels;
+        }
+
+        foreach (char first in Keys)
+        {
+            foreach (char second in Keys)
+            {
+                labels.Add($"{first}{second}");
+                if (labels.Count == count)
+                {
+                    return labels;
+                }
+            }
+        }
+
+        return labels;
+    }
+
+    /// <summary>
     /// Toggles broadcast input for the active tab: keystrokes typed into one
     /// pane are mirrored to every pane in the tab (Terminator/Tilix-style
     /// group input; Windows Terminal "toggleBroadcastInput").
@@ -4408,7 +4674,9 @@ internal sealed class MainWindowController
         if (tab.BroadcastInput)
         {
             tab.HeaderButton.Classes.Add("broadcastTab");
-            UpdateStatus($"Broadcast input ON — keystrokes go to all {tab.LeafControls.Count} panes in this tab.");
+            UpdateStatus(tab.LeafControls.Count > 1
+                ? $"Broadcast input ON — keystrokes mirror to all {tab.LeafControls.Count} panes in this tab."
+                : "Broadcast input ON — keystrokes will mirror to every pane you split in this tab.");
         }
         else
         {
@@ -4506,9 +4774,10 @@ internal sealed class MainWindowController
 
     /// <summary>
     /// Moves the active tab into a new window via the host factory. The
-    /// session is relaunched with the tab's profile and working directory.
+    /// session is relaunched with the tab's profile and working directory,
+    /// so the user confirms before running programs are closed.
     /// </summary>
-    private void MoveActiveTabToNewWindow()
+    private async void MoveActiveTabToNewWindow()
     {
         TerminalTab? tab = GetActiveTab();
         if (tab is null)
@@ -4528,8 +4797,77 @@ internal sealed class MainWindowController
             return;
         }
 
+        bool confirmed = await ShowConfirmationAsync(
+            "Move tab to new window?",
+            "The session restarts in the new window: running programs in this tab will be closed and scrollback is not carried over.",
+            "Move tab");
+        if (!confirmed)
+        {
+            return;
+        }
+
         factory(tab.ProfileId, tab.WorkingDirectory);
         CloseTab(tab);
+    }
+
+    /// <summary>
+    /// Shows a simple confirm dialog with the given texts.
+    /// </summary>
+    private async Task<bool> ShowConfirmationAsync(string title, string message, string confirmLabel)
+    {
+        TaskCompletionSource<bool> completion = new();
+
+        Button confirmButton = new()
+        {
+            Content = confirmLabel,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        Button cancelButton = new()
+        {
+            Content = "Cancel",
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            IsCancel = true,
+        };
+
+        StackPanel buttons = new()
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        buttons.Children.Add(confirmButton);
+        buttons.Children.Add(cancelButton);
+
+        StackPanel content = new()
+        {
+            Spacing = 16,
+            Margin = new Thickness(24),
+            MaxWidth = 420,
+        };
+        content.Children.Add(new TextBlock
+        {
+            Text = message,
+            FontSize = 14,
+            TextWrapping = TextWrapping.Wrap,
+        });
+        content.Children.Add(buttons);
+
+        Window dialog = new()
+        {
+            Title = title,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false,
+            Content = content,
+            ShowInTaskbar = false,
+        };
+
+        confirmButton.Click += (_, _) => { completion.TrySetResult(true); dialog.Close(); };
+        cancelButton.Click += (_, _) => { completion.TrySetResult(false); dialog.Close(); };
+        dialog.Closed += (_, _) => completion.TrySetResult(false);
+
+        await dialog.ShowDialog(_window);
+        return await completion.Task;
     }
 
     /// <summary>

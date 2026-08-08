@@ -297,7 +297,9 @@ public sealed class UnixPty : IPty
 
     private void ReadLoop()
     {
-        var buffer = new byte[8192];
+        // 64 KiB reads keep syscall overhead low under output floods; the
+        // kernel PTY buffer is typically 64 KiB, so larger reads gain nothing.
+        var buffer = new byte[65536];
 
         try
         {

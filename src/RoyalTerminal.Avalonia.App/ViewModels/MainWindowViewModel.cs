@@ -312,6 +312,8 @@ public sealed class MainWindowViewModel : ReactiveObject
         NewTabFromIndexInteraction = new Interaction<int, Unit>();
         MoveTabToNewWindowInteraction = new Interaction<Unit, Unit>();
         ToggleBroadcastInputInteraction = new Interaction<Unit, Unit>();
+        ToggleMarkModeInteraction = new Interaction<Unit, Unit>();
+        ToggleLinkHintsInteraction = new Interaction<Unit, Unit>();
         AcceptSshHostKeyCommand = ReactiveCommand.Create(AcceptSshHostKeyPrompt);
         DeclineSshHostKeyCommand = ReactiveCommand.Create(DeclineSshHostKeyPrompt);
 
@@ -463,6 +465,10 @@ public sealed class MainWindowViewModel : ReactiveObject
         OpenCommandPaletteCommand = ReactiveCommand.Create(ToggleCommandPalette);
         ToggleBroadcastInputCommand = ReactiveCommand.CreateFromObservable(
             () => ToggleBroadcastInputInteraction.Handle(Unit.Default));
+        ToggleMarkModeCommand = ReactiveCommand.CreateFromObservable(
+            () => ToggleMarkModeInteraction.Handle(Unit.Default));
+        ToggleLinkHintsCommand = ReactiveCommand.CreateFromObservable(
+            () => ToggleLinkHintsInteraction.Handle(Unit.Default));
         ConfirmCloseAllTabs = shellOptions.ConfirmCloseAllTabs;
         MoveTabToNewWindowFactory = shellOptions.MoveTabToNewWindowFactory;
         InitialProfileId = shellOptions.InitialProfileId;
@@ -536,6 +542,10 @@ public sealed class MainWindowViewModel : ReactiveObject
     public Interaction<Unit, Unit> MoveTabToNewWindowInteraction { get; }
 
     public Interaction<Unit, Unit> ToggleBroadcastInputInteraction { get; }
+
+    public Interaction<Unit, Unit> ToggleMarkModeInteraction { get; }
+
+    public Interaction<Unit, Unit> ToggleLinkHintsInteraction { get; }
 
     /// <summary>
     /// Gets whether closing a window with multiple tabs asks for confirmation.
@@ -679,6 +689,24 @@ public sealed class MainWindowViewModel : ReactiveObject
     /// <summary>Gets the command toggling input broadcast to all panes in the active tab.</summary>
     public ReactiveCommand<Unit, Unit> ToggleBroadcastInputCommand { get; }
 
+    /// <summary>Gets the command toggling keyboard mark mode (keyboard selection).</summary>
+    public ReactiveCommand<Unit, Unit> ToggleMarkModeCommand { get; }
+
+    /// <summary>Gets the command toggling keyboard link hints.</summary>
+    public ReactiveCommand<Unit, Unit> ToggleLinkHintsCommand { get; }
+
+    private IReadOnlyList<CommandPaletteItem> _dynamicCommandPaletteItems = [];
+
+    /// <summary>
+    /// Replaces context-dependent palette entries (open tabs, launch
+    /// profiles); merged after the static action list.
+    /// </summary>
+    public void SetDynamicCommandPaletteItems(IReadOnlyList<CommandPaletteItem> items)
+    {
+        _dynamicCommandPaletteItems = items ?? [];
+        RefreshCommandPaletteFilter();
+    }
+
     private bool _isCommandPaletteVisible;
     private string _commandPaletteQuery = string.Empty;
     private IReadOnlyList<CommandPaletteItem> _commandPaletteItems = [];
@@ -771,16 +799,19 @@ public sealed class MainWindowViewModel : ReactiveObject
     private void RefreshCommandPaletteFilter()
     {
         string query = _commandPaletteQuery.Trim();
+        IReadOnlyList<CommandPaletteItem> source = _dynamicCommandPaletteItems.Count == 0
+            ? _commandPaletteItems
+            : [.. _commandPaletteItems, .. _dynamicCommandPaletteItems];
         IReadOnlyList<CommandPaletteItem> filtered;
         if (query.Length == 0)
         {
-            filtered = _commandPaletteItems;
+            filtered = source;
         }
         else
         {
             List<CommandPaletteItem> substring = [];
             List<CommandPaletteItem> subsequence = [];
-            foreach (CommandPaletteItem item in _commandPaletteItems)
+            foreach (CommandPaletteItem item in source)
             {
                 if (item.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
                 {
@@ -863,6 +894,8 @@ public sealed class MainWindowViewModel : ReactiveObject
             new CommandPaletteItem("Clear Scrollback", null, ClearActiveScrollbackCommand),
             new CommandPaletteItem("Restart Session", null, RestartActiveSessionCommand),
             new CommandPaletteItem("Toggle Broadcast Input to All Panes", "Alt+Shift+B", ToggleBroadcastInputCommand),
+            new CommandPaletteItem("Mark Mode (Keyboard Selection)", "Ctrl+Shift+M", ToggleMarkModeCommand),
+            new CommandPaletteItem("Open Link by Keyboard (Hints)", "Ctrl+Shift+O", ToggleLinkHintsCommand),
         ];
         RefreshCommandPaletteFilter();
     }

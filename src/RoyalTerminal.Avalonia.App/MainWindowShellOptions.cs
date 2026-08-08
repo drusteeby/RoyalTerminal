@@ -96,4 +96,10 @@ public sealed class MainWindowShellOptions
     /// Gets or sets a working directory override for the first tab.
     /// </summary>
     public string? InitialWorkingDirectory { get; set; }
+
+    /// <summary>
+    /// Gets or sets the workspace store used to persist and restore
+    /// tab/pane layouts across launches. Null uses the platform default.
+    /// </summary>
+    public ITerminalWorkspaceStore? WorkspaceStore { get; set; }
 }

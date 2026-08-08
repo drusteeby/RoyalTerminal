@@ -63,6 +63,8 @@ public static class ShellKeybindingActions
     public const string MoveTabToNewWindow = "moveTabToNewWindow";
     public const string CommandPalette = "commandPalette";
     public const string ToggleBroadcastInput = "toggleBroadcastInput";
+    public const string MarkMode = "markMode";
+    public const string OpenLinkHints = "openLinkHints";
 }
 
 /// <summary>
@@ -130,6 +132,8 @@ internal static class ShellKeybindingResolver
             ShellKeybindingActions.MoveTabToNewWindow => (viewModel.MoveTabToNewWindowCommand, null),
             ShellKeybindingActions.CommandPalette => (viewModel.OpenCommandPaletteCommand, null),
             ShellKeybindingActions.ToggleBroadcastInput => (viewModel.ToggleBroadcastInputCommand, null),
+            ShellKeybindingActions.MarkMode => (viewModel.ToggleMarkModeCommand, null),
+            ShellKeybindingActions.OpenLinkHints => (viewModel.ToggleLinkHintsCommand, null),
             _ => ((System.Windows.Input.ICommand?)null, (object?)null),
         };
 

@@ -39,6 +39,8 @@
     <KeyBinding Gesture="Ctrl+Shift+Home" Command="{Binding ScrollToTopCommand}" />
     <KeyBinding Gesture="Ctrl+Shift+End" Command="{Binding ScrollToBottomCommand}" />
     <KeyBinding Gesture="Alt+Shift+B" Command="{Binding ToggleBroadcastInputCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+M" Command="{Binding ToggleMarkModeCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+O" Command="{Binding ToggleLinkHintsCommand}" />
     <KeyBinding Gesture="Ctrl+Tab" Command="{Binding CycleTabForwardCommand}" />
     <KeyBinding Gesture="Ctrl+Shift+Tab" Command="{Binding CycleTabBackwardCommand}" />
     <KeyBinding Gesture="Ctrl+Add" Command="{Binding IncreaseFontSizeCommand}" />
@@ -275,6 +277,12 @@
             <NativeMenuItem Header="Toggle _Broadcast Input"
                             Command="{Binding ToggleBroadcastInputCommand}"
                             Gesture="Alt+Shift+B" />
+            <NativeMenuItem Header="_Mark Mode (Keyboard Selection)"
+                            Command="{Binding ToggleMarkModeCommand}"
+                            Gesture="Ctrl+Shift+M" />
+            <NativeMenuItem Header="Open Link by _Keyboard"
+                            Command="{Binding ToggleLinkHintsCommand}"
+                            Gesture="Ctrl+Shift+O" />
             <NativeMenuItemSeparator />
             <NativeMenuItem Header="Toggle F_ullscreen"
                             Command="{Binding ToggleFullscreenCommand}"
