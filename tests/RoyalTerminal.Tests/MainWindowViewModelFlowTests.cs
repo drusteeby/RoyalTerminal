@@ -1341,6 +1341,7 @@ public class MainWindowViewModelFlowTests
             RepeatButton tabStripScrollRightButton = FindShellControl<RepeatButton>(window, "TabStripScrollRightButton")
                 ?? throw new InvalidOperationException("TabStripScrollRightButton was not found.");
 
+            viewModel.IsSearchPanelVisible = true; // the find bar overlay starts hidden
             window.Measure(new Size(window.Width, window.Height));
             window.Arrange(new Rect(0, 0, window.Width, window.Height));
 
@@ -1477,6 +1478,7 @@ public class MainWindowViewModelFlowTests
             TextBox topSearchBox = FindShellControl<TextBox>(window, "TopSearchBox")
                 ?? throw new InvalidOperationException("TopSearchBox was not found.");
 
+            ((MainWindowViewModel)window.DataContext!).IsSearchPanelVisible = true; // overlay starts hidden
             window.Measure(new Size(window.Width, window.Height));
             window.Arrange(new Rect(0, 0, window.Width, window.Height));
 
@@ -1541,12 +1543,14 @@ public class MainWindowViewModelFlowTests
             window.Arrange(new Rect(0, 0, window.Width, window.Height));
 
             Assert.True(viewModel.IsLeftPanelVisible);
-            Assert.True(viewModel.IsSearchPanelVisible);
+            // The find bar is an on-demand overlay now, hidden until toggled.
+            Assert.False(viewModel.IsSearchPanelVisible);
             Assert.True(viewModel.IsStatusBarVisible);
             Assert.False(viewModel.IsTabsInTitleBar);
             Assert.True(viewModel.IsBodyTabStripVisible);
             Assert.Equal(OperatingSystem.IsMacOS(), viewModel.IsTitleBarLogoVisible);
             Assert.True(shellRail.IsVisible);
+            viewModel.IsSearchPanelVisible = true;
             Assert.True(topSearchPanel.IsVisible);
             Assert.True(statusBar.IsVisible);
             Assert.False(titleBarTabStripHost.IsVisible);

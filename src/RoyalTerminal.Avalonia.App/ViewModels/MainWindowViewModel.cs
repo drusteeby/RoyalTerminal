@@ -63,7 +63,9 @@ public sealed class MainWindowViewModel : ReactiveObject
     private TerminalSettingsPanelState? _settingsPanelState;
     private bool _isSettingsPanelOpen;
     private bool _isLeftPanelVisible = true;
-    private bool _isSearchPanelVisible = true;
+    // The find bar floats over the terminal content, so it starts hidden and
+    // appears on demand (Ctrl+Shift+F), matching Windows Terminal.
+    private bool _isSearchPanelVisible;
     private bool _isStatusBarVisible = true;
     private bool _isTabsInTitleBar;
     private bool _isMicaBackdropEnabled;

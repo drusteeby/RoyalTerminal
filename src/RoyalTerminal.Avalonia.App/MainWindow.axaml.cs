@@ -92,7 +92,20 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
     /// </summary>
     private void ApplyHostKeybindings(MainWindowShellOptions shellOptions)
     {
-        if (shellOptions.Keybindings is not { Count: > 0 } bindings || ViewModel is null)
+        if (shellOptions.Keybindings is { Count: > 0 } bindings)
+        {
+            ApplyKeybindings(bindings);
+        }
+    }
+
+    /// <summary>
+    /// Replaces the window keybindings with the given host bindings. May be
+    /// called again at runtime (e.g. after a settings hot-reload).
+    /// </summary>
+    public void ApplyKeybindings(System.Collections.Generic.IReadOnlyList<ShellKeybinding> bindings)
+    {
+        ArgumentNullException.ThrowIfNull(bindings);
+        if (ViewModel is null)
         {
             return;
         }
