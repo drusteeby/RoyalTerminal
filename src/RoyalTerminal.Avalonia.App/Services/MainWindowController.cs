@@ -217,6 +217,9 @@ internal sealed class MainWindowController
         _tabStripNewTabButton = controlRoot.FindControl<Button>("TabStripNewTabButton")
             ?? throw new InvalidOperationException("TabStripNewTabButton was not found in MainWindow.");
         ConfigureProfileMenuButton(controlRoot.FindControl<Button>("TabStripProfileMenuButton"));
+        ConfigureCommandPalette(
+            controlRoot.FindControl<TextBox>("CommandPaletteBox"),
+            controlRoot.FindControl<ListBox>("CommandPaletteList"));
         _topSearchBox = controlRoot.FindControl<TextBox>("TopSearchBox");
         _windowsCaptionButtonStrip = controlRoot.FindControl<StackPanel>("WindowsCaptionButtonStrip")
             ?? throw new InvalidOperationException("WindowsCaptionButtonStrip was not found in MainWindow.");
@@ -433,6 +436,9 @@ internal sealed class MainWindowController
         disposables.Add(_viewModel.ApplyThemeModelInteraction.RegisterHandler(context =>
         {
             ApplyTheme(context.Input.Theme);
+            // Per-profile color schemes always win over the shell theme
+            // (Windows Terminal semantics).
+            ReapplyProfileSchemeThemes();
             context.SetOutput(Unit.Default);
         }));
 
@@ -622,6 +628,36 @@ internal sealed class MainWindowController
         disposables.Add(_viewModel.ClosePaneOrTabInteraction.RegisterHandler(context =>
         {
             ClosePaneOrTab();
+            context.SetOutput(Unit.Default);
+        }));
+
+        disposables.Add(_viewModel.ToggleFullscreenInteraction.RegisterHandler(context =>
+        {
+            ToggleFullScreen();
+            context.SetOutput(Unit.Default);
+        }));
+
+        disposables.Add(_viewModel.ScrollActiveTerminalInteraction.RegisterHandler(context =>
+        {
+            ScrollActiveTerminal(context.Input);
+            context.SetOutput(Unit.Default);
+        }));
+
+        disposables.Add(_viewModel.NewTabFromIndexInteraction.RegisterHandler(async context =>
+        {
+            await OpenTabForLaunchOptionIndexAsync(context.Input);
+            context.SetOutput(Unit.Default);
+        }));
+
+        disposables.Add(_viewModel.MoveTabToNewWindowInteraction.RegisterHandler(context =>
+        {
+            MoveActiveTabToNewWindow();
+            context.SetOutput(Unit.Default);
+        }));
+
+        disposables.Add(_viewModel.ToggleBroadcastInputInteraction.RegisterHandler(context =>
+        {
+            ToggleBroadcastInput();
             context.SetOutput(Unit.Default);
         }));
 
@@ -1984,11 +2020,42 @@ internal sealed class MainWindowController
             TerminalRenderMode.RenderedAuto,
             _terminalCapabilities);
         _viewModel.SetRenderMode(startupMode);
-        TerminalSessionProfile? defaultProfile = GetDefaultLaunchProfile();
+        TerminalSessionProfile? defaultProfile = GetInitialLaunchProfile();
         CreateNewTab(
             defaultProfile?.Id,
             defaultProfile?.DisplayName,
             defaultProfile);
+    }
+
+    /// <summary>
+    /// Resolves the first tab's profile, honoring host overrides (used by
+    /// "move tab to new window") before the default profile.
+    /// </summary>
+    private TerminalSessionProfile? GetInitialLaunchProfile()
+    {
+        TerminalSessionProfile? profile = null;
+        if (NormalizeOptional(_viewModel.InitialProfileId) is { } initialProfileId &&
+            _sessionLauncherDocument is { } document)
+        {
+            profile = FindProfile(document, initialProfileId);
+        }
+
+        profile ??= GetDefaultLaunchProfile();
+
+        if (profile is not null &&
+            NormalizeOptional(_viewModel.InitialWorkingDirectory) is { } workingDirectory &&
+            string.Equals(profile.Transport.TransportId, TerminalTransportIds.Pty, StringComparison.Ordinal))
+        {
+            profile = profile with
+            {
+                Transport = profile.Transport with
+                {
+                    Pty = profile.Transport.Pty with { WorkingDirectory = workingDirectory },
+                },
+            };
+        }
+
+        return profile;
     }
 
     private bool TryRestoreWorkspaceTabs()
@@ -2833,6 +2900,21 @@ internal sealed class MainWindowController
         ConfigureRenderer(standaloneControl.Renderer);
         ApplyTerminalBehaviorSettings(standaloneControl);
         ApplyShaderSampleToControl(standaloneControl);
+
+        standaloneControl.TerminalSessionService.InputSent += (_, inputArgs) =>
+            OnPaneInputSent(standaloneControl, inputArgs);
+
+        standaloneControl.FontZoomRequested += (_, direction) =>
+        {
+            if (direction > 0)
+            {
+                _viewModel.IncreaseFontSizeCommand.Execute().Subscribe();
+            }
+            else
+            {
+                _viewModel.DecreaseFontSizeCommand.Execute().Subscribe();
+            }
+        };
 
         standaloneControl.TitleChanged += (_, title) =>
         {
@@ -3724,6 +3806,68 @@ internal sealed class MainWindowController
     private bool _dragReorderActive;
 
     /// <summary>
+    /// Wires the command palette overlay: focus on open, arrow-key
+    /// navigation, Enter/click to execute, Escape to dismiss.
+    /// </summary>
+    private void ConfigureCommandPalette(TextBox? paletteBox, ListBox? paletteList)
+    {
+        if (paletteBox is null || paletteList is null)
+        {
+            return;
+        }
+
+        _viewModel.WhenAnyValue(static model => model.IsCommandPaletteVisible)
+            .Subscribe(visible =>
+            {
+                if (visible)
+                {
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        paletteBox.Focus();
+                        paletteBox.SelectAll();
+                    }, DispatcherPriority.Input);
+                }
+                else
+                {
+                    FocusActiveTerminal();
+                }
+            });
+
+        paletteBox.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            switch (e.Key)
+            {
+                case Key.Down:
+                    _viewModel.MoveCommandPaletteSelection(1);
+                    paletteList.ScrollIntoView(_viewModel.SelectedCommandPaletteItem!);
+                    e.Handled = true;
+                    break;
+                case Key.Up:
+                    _viewModel.MoveCommandPaletteSelection(-1);
+                    paletteList.ScrollIntoView(_viewModel.SelectedCommandPaletteItem!);
+                    e.Handled = true;
+                    break;
+                case Key.Enter:
+                    _viewModel.ExecuteCommandPaletteItem(null);
+                    e.Handled = true;
+                    break;
+                case Key.Escape:
+                    _viewModel.IsCommandPaletteVisible = false;
+                    e.Handled = true;
+                    break;
+            }
+        }, RoutingStrategies.Tunnel);
+
+        paletteList.AddHandler(InputElement.TappedEvent, (_, _) =>
+        {
+            if (_viewModel.SelectedCommandPaletteItem is { } item)
+            {
+                _viewModel.ExecuteCommandPaletteItem(item);
+            }
+        }, RoutingStrategies.Bubble);
+    }
+
+    /// <summary>
     /// Attaches a profile flyout to the tab strip's chevron button
     /// (Windows Terminal's new-tab profile dropdown). Items are rebuilt on
     /// every open so the list always reflects the current profile catalog.
@@ -4243,6 +4387,149 @@ internal sealed class MainWindowController
         {
             DuplicateTab(tab);
         }
+    }
+
+    private bool _broadcastRelayInProgress;
+
+    /// <summary>
+    /// Toggles broadcast input for the active tab: keystrokes typed into one
+    /// pane are mirrored to every pane in the tab (Terminator/Tilix-style
+    /// group input; Windows Terminal "toggleBroadcastInput").
+    /// </summary>
+    private void ToggleBroadcastInput()
+    {
+        TerminalTab? tab = GetActiveTab();
+        if (tab is null)
+        {
+            return;
+        }
+
+        tab.BroadcastInput = !tab.BroadcastInput;
+        if (tab.BroadcastInput)
+        {
+            tab.HeaderButton.Classes.Add("broadcastTab");
+            UpdateStatus($"Broadcast input ON — keystrokes go to all {tab.LeafControls.Count} panes in this tab.");
+        }
+        else
+        {
+            tab.HeaderButton.Classes.Remove("broadcastTab");
+            UpdateStatus("Broadcast input off.");
+        }
+
+        AppendEventLog($"[{tab.Title}] Broadcast input {(tab.BroadcastInput ? "enabled" : "disabled")}.");
+    }
+
+    /// <summary>
+    /// Mirrors input bytes from one pane to its siblings when the owning tab
+    /// has broadcast input enabled.
+    /// </summary>
+    private void OnPaneInputSent(TerminalControl source, TerminalSessionInputEventArgs inputArgs)
+    {
+        if (_broadcastRelayInProgress)
+        {
+            return;
+        }
+
+        TerminalTab? tab = FindTabForControl(source);
+        if (tab is null || !tab.BroadcastInput || tab.LeafControls.Count <= 1)
+        {
+            return;
+        }
+
+        _broadcastRelayInProgress = true;
+        try
+        {
+            foreach (TerminalControl leaf in tab.LeafControls)
+            {
+                if (!ReferenceEquals(leaf, source))
+                {
+                    leaf.SendInput(inputArgs.Data.Span);
+                }
+            }
+        }
+        finally
+        {
+            _broadcastRelayInProgress = false;
+        }
+    }
+
+    /// <summary>
+    /// Scrolls the active terminal: up, down, pageUp, pageDown, top, bottom.
+    /// </summary>
+    private void ScrollActiveTerminal(string request)
+    {
+        TerminalControl? control = GetActiveStandaloneControl();
+        if (control is null)
+        {
+            return;
+        }
+
+        int page = Math.Max(1, control.Rows - 1);
+        switch (request)
+        {
+            case "up":
+                control.ScrollByRows(-1);
+                break;
+            case "down":
+                control.ScrollByRows(1);
+                break;
+            case "pageUp":
+                control.ScrollByRows(-page);
+                break;
+            case "pageDown":
+                control.ScrollByRows(page);
+                break;
+            case "top":
+                control.ScrollByRows(-1_000_000);
+                break;
+            case "bottom":
+                control.ScrollToBottom();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Opens a tab for the Nth session launch option (Windows Terminal
+    /// "newTab" with a profile index).
+    /// </summary>
+    private async Task OpenTabForLaunchOptionIndexAsync(int index)
+    {
+        IReadOnlyList<SessionLaunchOption> options = _viewModel.SessionLaunchOptions;
+        if (index < 0 || index >= options.Count)
+        {
+            UpdateStatus($"No profile at index {index}.");
+            return;
+        }
+
+        await LaunchSessionProfileAsync(options[index].Id);
+    }
+
+    /// <summary>
+    /// Moves the active tab into a new window via the host factory. The
+    /// session is relaunched with the tab's profile and working directory.
+    /// </summary>
+    private void MoveActiveTabToNewWindow()
+    {
+        TerminalTab? tab = GetActiveTab();
+        if (tab is null)
+        {
+            return;
+        }
+
+        if (_viewModel.MoveTabToNewWindowFactory is not { } factory)
+        {
+            UpdateStatus("Moving tabs to a new window is not available.");
+            return;
+        }
+
+        if (_tabs.Count <= 1)
+        {
+            UpdateStatus("This tab is already in its own window.");
+            return;
+        }
+
+        factory(tab.ProfileId, tab.WorkingDirectory);
+        CloseTab(tab);
     }
 
     /// <summary>
@@ -5782,6 +6069,18 @@ internal sealed class MainWindowController
         standalone.BackgroundOpacityEnabled = appearance.BackgroundOpacityEnabled;
         standalone.TextHighlightingMode = appearance.TextHighlightingMode;
         standalone.TextHighlightRules = BuildRuntimeTextHighlightRules(null, appearance);
+    }
+
+    /// <summary>
+    /// Re-applies per-profile color schemes to every launched terminal after
+    /// a global theme change or a settings hot reload.
+    /// </summary>
+    private void ReapplyProfileSchemeThemes()
+    {
+        foreach ((TerminalControl control, TerminalLaunchConfiguration configuration) in _launchConfigurations)
+        {
+            ApplyProfileSchemeTheme(control, configuration.Profile.Appearance);
+        }
     }
 
     /// <summary>
@@ -7705,6 +8004,12 @@ internal sealed class MainWindowController
         /// Custom titles are not overwritten by terminal (OSC) title updates.
         /// </summary>
         public bool HasCustomTitle { get; private set; }
+
+        /// <summary>
+        /// Gets or sets whether typed input is mirrored to every pane in
+        /// this tab.
+        /// </summary>
+        public bool BroadcastInput { get; set; }
 
         public void UpdateTitle(string title)
         {

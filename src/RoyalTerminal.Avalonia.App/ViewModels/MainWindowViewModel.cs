@@ -57,7 +57,7 @@ public sealed class MainWindowViewModel : ReactiveObject
     private TerminalRenderMode _activeRenderMode = TerminalRenderMode.RenderedAuto;
     private readonly ITerminalModeResolver _modeResolver;
     private readonly ITerminalThemeCatalog _themeCatalog;
-    private readonly IReadOnlyList<TerminalThemePreset> _themePresets;
+    private IReadOnlyList<TerminalThemePreset> _themePresets;
     private readonly bool _showMacOsTitleBarLogos;
     private readonly Dictionary<TerminalRenderMode, ModeThemeState> _modeThemes = [];
     private TerminalSettingsPanelState? _settingsPanelState;
@@ -306,6 +306,12 @@ public sealed class MainWindowViewModel : ReactiveObject
         SplitPaneAutoInteraction = new Interaction<Unit, Unit>();
         ClosePaneOrTabInteraction = new Interaction<Unit, Unit>();
         NewWindowInteraction = new Interaction<Unit, Unit>();
+        ToggleFullscreenInteraction = new Interaction<Unit, Unit>();
+        OpenSettingsFileInteraction = new Interaction<Unit, Unit>();
+        ScrollActiveTerminalInteraction = new Interaction<string, Unit>();
+        NewTabFromIndexInteraction = new Interaction<int, Unit>();
+        MoveTabToNewWindowInteraction = new Interaction<Unit, Unit>();
+        ToggleBroadcastInputInteraction = new Interaction<Unit, Unit>();
         AcceptSshHostKeyCommand = ReactiveCommand.Create(AcceptSshHostKeyPrompt);
         DeclineSshHostKeyCommand = ReactiveCommand.Create(DeclineSshHostKeyPrompt);
 
@@ -424,8 +430,45 @@ public sealed class MainWindowViewModel : ReactiveObject
             () => ClosePaneOrTabInteraction.Handle(Unit.Default));
         NewWindowCommand = ReactiveCommand.CreateFromObservable(
             () => NewWindowInteraction.Handle(Unit.Default));
+        ToggleFullscreenCommand = ReactiveCommand.CreateFromObservable(
+            () => ToggleFullscreenInteraction.Handle(Unit.Default));
+        OpenSettingsFileCommand = ReactiveCommand.CreateFromObservable(
+            () => OpenSettingsFileInteraction.Handle(Unit.Default));
+        ScrollUpCommand = ReactiveCommand.CreateFromObservable(
+            () => ScrollActiveTerminalInteraction.Handle("up"));
+        ScrollDownCommand = ReactiveCommand.CreateFromObservable(
+            () => ScrollActiveTerminalInteraction.Handle("down"));
+        ScrollUpPageCommand = ReactiveCommand.CreateFromObservable(
+            () => ScrollActiveTerminalInteraction.Handle("pageUp"));
+        ScrollDownPageCommand = ReactiveCommand.CreateFromObservable(
+            () => ScrollActiveTerminalInteraction.Handle("pageDown"));
+        ScrollToTopCommand = ReactiveCommand.CreateFromObservable(
+            () => ScrollActiveTerminalInteraction.Handle("top"));
+        ScrollToBottomCommand = ReactiveCommand.CreateFromObservable(
+            () => ScrollActiveTerminalInteraction.Handle("bottom"));
+        NewTabFromIndexCommand = ReactiveCommand.CreateFromObservable<object?, Unit>(parameter =>
+        {
+            int index = parameter switch
+            {
+                int value => value,
+                string text when int.TryParse(text, out int parsed) => parsed,
+                _ => -1,
+            };
+            return index >= 0
+                ? NewTabFromIndexInteraction.Handle(index)
+                : Observable.Return(Unit.Default);
+        });
+        MoveTabToNewWindowCommand = ReactiveCommand.CreateFromObservable(
+            () => MoveTabToNewWindowInteraction.Handle(Unit.Default));
+        OpenCommandPaletteCommand = ReactiveCommand.Create(ToggleCommandPalette);
+        ToggleBroadcastInputCommand = ReactiveCommand.CreateFromObservable(
+            () => ToggleBroadcastInputInteraction.Handle(Unit.Default));
         ConfirmCloseAllTabs = shellOptions.ConfirmCloseAllTabs;
+        MoveTabToNewWindowFactory = shellOptions.MoveTabToNewWindowFactory;
+        InitialProfileId = shellOptions.InitialProfileId;
+        InitialWorkingDirectory = shellOptions.InitialWorkingDirectory;
 
+        InitializeCommandPalette();
         UpdateThemePresetButtonText();
     }
 
@@ -481,10 +524,39 @@ public sealed class MainWindowViewModel : ReactiveObject
 
     public Interaction<Unit, Unit> NewWindowInteraction { get; }
 
+    public Interaction<Unit, Unit> ToggleFullscreenInteraction { get; }
+
+    public Interaction<Unit, Unit> OpenSettingsFileInteraction { get; }
+
+    /// <summary>Scroll requests for the active terminal: up, down, pageUp, pageDown, top, bottom.</summary>
+    public Interaction<string, Unit> ScrollActiveTerminalInteraction { get; }
+
+    public Interaction<int, Unit> NewTabFromIndexInteraction { get; }
+
+    public Interaction<Unit, Unit> MoveTabToNewWindowInteraction { get; }
+
+    public Interaction<Unit, Unit> ToggleBroadcastInputInteraction { get; }
+
     /// <summary>
     /// Gets whether closing a window with multiple tabs asks for confirmation.
     /// </summary>
     internal bool ConfirmCloseAllTabs { get; }
+
+    /// <summary>
+    /// Gets the host factory for moving a tab into a new window
+    /// (profile id, working directory), or null when unavailable.
+    /// </summary>
+    internal Action<string?, string?>? MoveTabToNewWindowFactory { get; }
+
+    /// <summary>
+    /// Gets the profile id override for the first tab, if any.
+    /// </summary>
+    internal string? InitialProfileId { get; }
+
+    /// <summary>
+    /// Gets the working directory override for the first tab, if any.
+    /// </summary>
+    internal string? InitialWorkingDirectory { get; }
 
     public ReactiveCommand<Unit, Unit> AcceptSshHostKeyCommand { get; }
     public ReactiveCommand<Unit, Unit> DeclineSshHostKeyCommand { get; }
@@ -570,6 +642,230 @@ public sealed class MainWindowViewModel : ReactiveObject
 
     /// <summary>Gets the command opening a new shell window via the host factory.</summary>
     public ReactiveCommand<Unit, Unit> NewWindowCommand { get; }
+
+    /// <summary>Gets the command toggling window fullscreen.</summary>
+    public ReactiveCommand<Unit, Unit> ToggleFullscreenCommand { get; }
+
+    /// <summary>Gets the command opening the settings source (host file or in-app panel).</summary>
+    public ReactiveCommand<Unit, Unit> OpenSettingsFileCommand { get; }
+
+    /// <summary>Gets the command scrolling the active terminal up one line.</summary>
+    public ReactiveCommand<Unit, Unit> ScrollUpCommand { get; }
+
+    /// <summary>Gets the command scrolling the active terminal down one line.</summary>
+    public ReactiveCommand<Unit, Unit> ScrollDownCommand { get; }
+
+    /// <summary>Gets the command scrolling the active terminal up one page.</summary>
+    public ReactiveCommand<Unit, Unit> ScrollUpPageCommand { get; }
+
+    /// <summary>Gets the command scrolling the active terminal down one page.</summary>
+    public ReactiveCommand<Unit, Unit> ScrollDownPageCommand { get; }
+
+    /// <summary>Gets the command scrolling the active terminal to the top of scrollback.</summary>
+    public ReactiveCommand<Unit, Unit> ScrollToTopCommand { get; }
+
+    /// <summary>Gets the command scrolling the active terminal to the live bottom.</summary>
+    public ReactiveCommand<Unit, Unit> ScrollToBottomCommand { get; }
+
+    /// <summary>Gets the command opening a new tab for the Nth launch profile.</summary>
+    public ReactiveCommand<object?, Unit> NewTabFromIndexCommand { get; }
+
+    /// <summary>Gets the command moving the active tab into a new window (relaunches the session).</summary>
+    public ReactiveCommand<Unit, Unit> MoveTabToNewWindowCommand { get; }
+
+    /// <summary>Gets the command opening the command palette.</summary>
+    public ReactiveCommand<Unit, Unit> OpenCommandPaletteCommand { get; }
+
+    /// <summary>Gets the command toggling input broadcast to all panes in the active tab.</summary>
+    public ReactiveCommand<Unit, Unit> ToggleBroadcastInputCommand { get; }
+
+    private bool _isCommandPaletteVisible;
+    private string _commandPaletteQuery = string.Empty;
+    private IReadOnlyList<CommandPaletteItem> _commandPaletteItems = [];
+    private IReadOnlyList<CommandPaletteItem> _filteredCommandPaletteItems = [];
+    private CommandPaletteItem? _selectedCommandPaletteItem;
+
+    /// <summary>Gets or sets whether the command palette overlay is visible.</summary>
+    public bool IsCommandPaletteVisible
+    {
+        get => _isCommandPaletteVisible;
+        set => this.RaiseAndSetIfChanged(ref _isCommandPaletteVisible, value);
+    }
+
+    /// <summary>Gets or sets the palette filter query.</summary>
+    public string CommandPaletteQuery
+    {
+        get => _commandPaletteQuery;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _commandPaletteQuery, value);
+            RefreshCommandPaletteFilter();
+        }
+    }
+
+    /// <summary>Gets the palette items matching the current query.</summary>
+    public IReadOnlyList<CommandPaletteItem> FilteredCommandPaletteItems
+    {
+        get => _filteredCommandPaletteItems;
+        private set => this.RaiseAndSetIfChanged(ref _filteredCommandPaletteItems, value);
+    }
+
+    /// <summary>Gets or sets the highlighted palette item.</summary>
+    public CommandPaletteItem? SelectedCommandPaletteItem
+    {
+        get => _selectedCommandPaletteItem;
+        set => this.RaiseAndSetIfChanged(ref _selectedCommandPaletteItem, value);
+    }
+
+    /// <summary>
+    /// Opens the palette with an empty query, or closes it when open.
+    /// </summary>
+    private void ToggleCommandPalette()
+    {
+        if (IsCommandPaletteVisible)
+        {
+            IsCommandPaletteVisible = false;
+            return;
+        }
+
+        _commandPaletteQuery = string.Empty;
+        this.RaisePropertyChanged(nameof(CommandPaletteQuery));
+        RefreshCommandPaletteFilter();
+        IsCommandPaletteVisible = true;
+    }
+
+    /// <summary>
+    /// Executes a palette item and closes the palette.
+    /// </summary>
+    public void ExecuteCommandPaletteItem(CommandPaletteItem? item)
+    {
+        item ??= SelectedCommandPaletteItem ?? (FilteredCommandPaletteItems.Count > 0 ? FilteredCommandPaletteItems[0] : null);
+        if (item is null)
+        {
+            return;
+        }
+
+        IsCommandPaletteVisible = false;
+        if (item.Command.CanExecute(item.Parameter))
+        {
+            item.Command.Execute(item.Parameter);
+        }
+    }
+
+    /// <summary>
+    /// Moves the palette selection by the given offset (keyboard navigation).
+    /// </summary>
+    public void MoveCommandPaletteSelection(int offset)
+    {
+        IReadOnlyList<CommandPaletteItem> items = FilteredCommandPaletteItems;
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        int current = SelectedCommandPaletteItem is null ? -1 : items.ToList().IndexOf(SelectedCommandPaletteItem);
+        int next = Math.Clamp(current < 0 ? (offset > 0 ? 0 : items.Count - 1) : current + offset, 0, items.Count - 1);
+        SelectedCommandPaletteItem = items[next];
+    }
+
+    private void RefreshCommandPaletteFilter()
+    {
+        string query = _commandPaletteQuery.Trim();
+        IReadOnlyList<CommandPaletteItem> filtered;
+        if (query.Length == 0)
+        {
+            filtered = _commandPaletteItems;
+        }
+        else
+        {
+            List<CommandPaletteItem> substring = [];
+            List<CommandPaletteItem> subsequence = [];
+            foreach (CommandPaletteItem item in _commandPaletteItems)
+            {
+                if (item.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+                {
+                    substring.Add(item);
+                }
+                else if (IsSubsequence(query, item.Name))
+                {
+                    subsequence.Add(item);
+                }
+            }
+
+            substring.AddRange(subsequence);
+            filtered = substring;
+        }
+
+        FilteredCommandPaletteItems = filtered;
+        SelectedCommandPaletteItem = filtered.Count > 0 ? filtered[0] : null;
+    }
+
+    private static bool IsSubsequence(string query, string name)
+    {
+        int queryIndex = 0;
+        foreach (char c in name)
+        {
+            if (queryIndex < query.Length && char.ToLowerInvariant(c) == char.ToLowerInvariant(query[queryIndex]))
+            {
+                queryIndex++;
+            }
+        }
+
+        return queryIndex == query.Length;
+    }
+
+    /// <summary>
+    /// Builds the command palette catalog once all commands exist.
+    /// </summary>
+    private void InitializeCommandPalette()
+    {
+        _commandPaletteItems =
+        [
+            new CommandPaletteItem("New Tab", "Ctrl+Shift+T", NewTabCommand),
+            new CommandPaletteItem("New Window", "Ctrl+Shift+N", NewWindowCommand),
+            new CommandPaletteItem("Duplicate Tab", "Ctrl+Shift+D", DuplicateTabCommand),
+            new CommandPaletteItem("Close Tab", null, CloseCurrentTabCommand),
+            new CommandPaletteItem("Close Pane (or Tab)", "Ctrl+Shift+W", ClosePaneOrTabCommand),
+            new CommandPaletteItem("Move Tab to New Window", null, MoveTabToNewWindowCommand),
+            new CommandPaletteItem("Next Tab", "Ctrl+Tab", CycleTabForwardCommand),
+            new CommandPaletteItem("Previous Tab", "Ctrl+Shift+Tab", CycleTabBackwardCommand),
+            new CommandPaletteItem("Split Pane Right", "Alt+Shift+Plus", SplitPaneRightCommand),
+            new CommandPaletteItem("Split Pane Down", "Alt+Shift+Minus", SplitPaneDownCommand),
+            new CommandPaletteItem("Split Pane Auto", "Alt+Shift+D", SplitPaneAutoCommand),
+            new CommandPaletteItem("Zoom Pane", "Ctrl+Shift+X", TogglePaneZoomCommand),
+            new CommandPaletteItem("Focus Pane Left", "Alt+Left", FocusPaneLeftCommand),
+            new CommandPaletteItem("Focus Pane Right", "Alt+Right", FocusPaneRightCommand),
+            new CommandPaletteItem("Focus Pane Up", "Alt+Up", FocusPaneUpCommand),
+            new CommandPaletteItem("Focus Pane Down", "Alt+Down", FocusPaneDownCommand),
+            new CommandPaletteItem("Resize Pane Left", "Alt+Shift+Left", ResizePaneLeftCommand),
+            new CommandPaletteItem("Resize Pane Right", "Alt+Shift+Right", ResizePaneRightCommand),
+            new CommandPaletteItem("Resize Pane Up", "Alt+Shift+Up", ResizePaneUpCommand),
+            new CommandPaletteItem("Resize Pane Down", "Alt+Shift+Down", ResizePaneDownCommand),
+            new CommandPaletteItem("Copy", "Ctrl+Shift+C", CopySelectionCommand),
+            new CommandPaletteItem("Paste", "Ctrl+Shift+V", PasteClipboardCommand),
+            new CommandPaletteItem("Select All", "Ctrl+Shift+A", SelectAllCommand),
+            new CommandPaletteItem("Find", "Ctrl+Shift+F", ToggleSearchPanelCommand),
+            new CommandPaletteItem("Increase Font Size", "Ctrl+Plus", IncreaseFontSizeCommand),
+            new CommandPaletteItem("Decrease Font Size", "Ctrl+Minus", DecreaseFontSizeCommand),
+            new CommandPaletteItem("Reset Font Size", "Ctrl+0", ResetFontSizeCommand),
+            new CommandPaletteItem("Scroll Up", null, ScrollUpCommand),
+            new CommandPaletteItem("Scroll Down", null, ScrollDownCommand),
+            new CommandPaletteItem("Scroll Up One Page", null, ScrollUpPageCommand),
+            new CommandPaletteItem("Scroll Down One Page", null, ScrollDownPageCommand),
+            new CommandPaletteItem("Scroll to Top", null, ScrollToTopCommand),
+            new CommandPaletteItem("Scroll to Bottom", null, ScrollToBottomCommand),
+            new CommandPaletteItem("Toggle Fullscreen", "F11", ToggleFullscreenCommand),
+            new CommandPaletteItem("Open Settings", "Ctrl+Comma", OpenSettingsFileCommand),
+            new CommandPaletteItem("Next Color Theme", null, CycleThemePresetCommand),
+            new CommandPaletteItem("Toggle Left Panel", null, ToggleLeftPanelCommand),
+            new CommandPaletteItem("Toggle Status Bar", null, ToggleStatusBarCommand),
+            new CommandPaletteItem("Move Tabs to Title Bar", null, ToggleTabsInTitleBarCommand),
+            new CommandPaletteItem("Clear Scrollback", null, ClearActiveScrollbackCommand),
+            new CommandPaletteItem("Restart Session", null, RestartActiveSessionCommand),
+            new CommandPaletteItem("Toggle Broadcast Input to All Panes", "Alt+Shift+B", ToggleBroadcastInputCommand),
+        ];
+        RefreshCommandPaletteFilter();
+    }
 
     public TerminalSettingsPanelState SettingsPanelState => _settingsPanelState ??= new TerminalSettingsPanelState();
 
@@ -2595,6 +2891,28 @@ public sealed class MainWindowViewModel : ReactiveObject
         }
     }
 
+    /// <summary>
+    /// Replaces host theme presets (settings hot reload) and re-applies the
+    /// active theme so scheme edits take effect in running terminals.
+    /// </summary>
+    internal void UpdateThemePresets(IReadOnlyList<ShellThemePreset>? additionalPresets, string? defaultPresetId)
+    {
+        if (_themeCatalog is not TerminalThemeCatalog catalog)
+        {
+            return;
+        }
+
+        catalog.ReplaceAdditionalPresets(additionalPresets, defaultPresetId);
+        _themePresets = _themeCatalog.Presets;
+
+        ModeThemeState state = GetModeThemeState(_activeRenderMode);
+        string presetId = state.PresetId is { } current && FindPresetIndex(current) >= 0
+            ? current
+            : _themeCatalog.GetDefaultPreset(_activeRenderMode).Id;
+        ApplyPresetToMode(_activeRenderMode, presetId);
+        ApplyCurrentModeTheme("Settings reloaded: color schemes updated").Subscribe();
+    }
+
     private void ApplyPresetToMode(TerminalRenderMode mode, string presetId)
     {
         ModeThemeState state = GetModeThemeState(mode);
@@ -3040,6 +3358,20 @@ public sealed record SessionLaunchOption(
     string TransportId,
     string Subtitle,
     string? WorkingDirectory);
+
+/// <summary>
+/// A command palette entry: display name, optional gesture hint, and the
+/// command it executes.
+/// </summary>
+/// <param name="Name">Display name shown in the palette list.</param>
+/// <param name="Gesture">Optional key gesture hint.</param>
+/// <param name="Command">Command executed when the entry is chosen.</param>
+/// <param name="Parameter">Optional command parameter.</param>
+public sealed record CommandPaletteItem(
+    string Name,
+    string? Gesture,
+    System.Windows.Input.ICommand Command,
+    object? Parameter = null);
 
 /// <summary>
 /// User-selectable terminal capture file format option.

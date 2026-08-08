@@ -72,4 +72,28 @@ public sealed class MainWindowShellOptions
     /// hosts can start collapsed; View > Show Left Panel toggles it back.
     /// </summary>
     public bool ShowLeftPanelOnStartup { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the action invoked by "open settings" (e.g. opening the
+    /// host's settings file in an editor). Null opens the in-app settings
+    /// panel instead.
+    /// </summary>
+    public Action? OpenSettingsAction { get; set; }
+
+    /// <summary>
+    /// Gets or sets the factory invoked by "move tab to new window" with the
+    /// tab's profile id and working directory. Null disables the action.
+    /// </summary>
+    public Action<string?, string?>? MoveTabToNewWindowFactory { get; set; }
+
+    /// <summary>
+    /// Gets or sets the profile id used for the first tab instead of the
+    /// default profile (used by "move tab to new window").
+    /// </summary>
+    public string? InitialProfileId { get; set; }
+
+    /// <summary>
+    /// Gets or sets a working directory override for the first tab.
+    /// </summary>
+    public string? InitialWorkingDirectory { get; set; }
 }

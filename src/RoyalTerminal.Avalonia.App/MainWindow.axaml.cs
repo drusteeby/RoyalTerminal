@@ -60,6 +60,20 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
                 shellOptions.NewWindowFactory?.Invoke();
                 context.SetOutput(System.Reactive.Unit.Default);
             }));
+
+            disposables.Add(ViewModel!.OpenSettingsFileInteraction.RegisterHandler(context =>
+            {
+                if (shellOptions.OpenSettingsAction is { } openSettings)
+                {
+                    openSettings();
+                }
+                else
+                {
+                    ViewModel!.PrepareSettingsPanelCommand.Execute().Subscribe();
+                }
+
+                context.SetOutput(System.Reactive.Unit.Default);
+            }));
             var backdropCoordinator = new MainWindowBackdropCoordinator(this, ViewModel!);
             var iconThemeCoordinator = new MainWindowIconThemeCoordinator(this);
             var systemAccentResourceCoordinator = new SystemAccentResourceCoordinator(this);
@@ -96,6 +110,17 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
         {
             ApplyKeybindings(bindings);
         }
+    }
+
+    /// <summary>
+    /// Replaces host theme presets and re-applies the active theme (settings
+    /// hot reload for color schemes).
+    /// </summary>
+    public void UpdateThemePresets(
+        System.Collections.Generic.IReadOnlyList<ShellThemePreset>? additionalPresets,
+        string? defaultPresetId)
+    {
+        ViewModel?.UpdateThemePresets(additionalPresets, defaultPresetId);
     }
 
     /// <summary>

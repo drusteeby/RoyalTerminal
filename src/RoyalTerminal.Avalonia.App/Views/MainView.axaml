@@ -1000,6 +1000,48 @@
                   Background="{DynamicResource WindowBackgroundBrush}" />
           </Border>
 
+          <!-- Command palette (Windows Terminal-style), centered over the
+               terminal area. -->
+          <Border x:Name="CommandPaletteOverlay"
+                  IsVisible="{Binding IsCommandPaletteVisible}"
+                  HorizontalAlignment="Center"
+                  VerticalAlignment="Top"
+                  Margin="0,40,0,0"
+                  Padding="10"
+                  MinWidth="440"
+                  MaxWidth="580"
+                  CornerRadius="8"
+                  Background="{DynamicResource TabStripBackgroundBrush}"
+                  BorderBrush="{DynamicResource WindowBackgroundBrush}"
+                  BorderThickness="1"
+                  BoxShadow="0 8 28 0 #88000000">
+            <StackPanel Spacing="8">
+              <TextBox x:Name="CommandPaletteBox"
+                       Classes="compactField"
+                       Padding="8,6"
+                       PlaceholderText="Type a command name..."
+                       Text="{Binding CommandPaletteQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+              <ListBox x:Name="CommandPaletteList"
+                       MaxHeight="340"
+                       ItemsSource="{Binding FilteredCommandPaletteItems}"
+                       SelectedItem="{Binding SelectedCommandPaletteItem, Mode=TwoWay}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:CommandPaletteItem">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                      <TextBlock Text="{Binding Name}"
+                                 VerticalAlignment="Center" />
+                      <TextBlock Grid.Column="1"
+                                 Text="{Binding Gesture}"
+                                 Opacity="0.55"
+                                 FontSize="11"
+                                 VerticalAlignment="Center" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </StackPanel>
+          </Border>
+
           <!-- In-content find bar (Windows Terminal-style), anchored over the
                terminal area's top-right corner. -->
           <Border x:Name="SearchOverlayContainer"

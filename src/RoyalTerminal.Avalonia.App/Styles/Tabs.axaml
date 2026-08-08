@@ -869,6 +869,15 @@
     <Setter Property="BorderBrush" Value="{DynamicResource ToolbarDividerBrush}" />
     <Setter Property="BorderThickness" Value="1,1,1,0" />
   </Style>
+  <!-- Broadcast-input indicator: an amber underline warns that keystrokes
+       are mirrored to every pane in this tab. -->
+  <Style Selector="Button.tabHeader.broadcastTab">
+    <Setter Property="BorderBrush" Value="#E5A50A" />
+    <Setter Property="BorderThickness" Value="0,0,0,2" />
+  </Style>
+  <Style Selector="Button.tabHeader.broadcastTab TextBlock">
+    <Setter Property="Foreground" Value="#E5A50A" />
+  </Style>
   <Style Selector="Button.tabHeader Button">
     <Setter Property="Foreground" Value="{DynamicResource TabHeaderForegroundBrush}" />
     <Setter Property="CornerRadius" Value="{DynamicResource Shell.Radius.Small}" />

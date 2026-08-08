@@ -179,9 +179,9 @@ internal sealed class TerminalThemeCatalog : ITerminalThemeCatalog
         [TerminalRenderMode.RenderedAuto] = "ayu-mirage",
     };
 
-    private readonly IReadOnlyList<TerminalThemePreset> _presets;
-    private readonly IReadOnlyDictionary<string, string> _presetThemeText;
-    private readonly string? _defaultPresetId;
+    private IReadOnlyList<TerminalThemePreset> _presets;
+    private IReadOnlyDictionary<string, string> _presetThemeText;
+    private string? _defaultPresetId;
 
     public TerminalThemeCatalog()
         : this(additionalPresets: null, defaultPresetId: null)
@@ -193,6 +193,16 @@ internal sealed class TerminalThemeCatalog : ITerminalThemeCatalog
     /// built-in presets, optionally overriding the default preset.
     /// </summary>
     public TerminalThemeCatalog(IReadOnlyList<ShellThemePreset>? additionalPresets, string? defaultPresetId)
+    {
+        ReplaceAdditionalPresets(additionalPresets, defaultPresetId);
+    }
+
+    /// <summary>
+    /// Replaces the host-supplied presets and default (used by settings hot
+    /// reload). Built-in presets are always kept after host presets.
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.MemberNotNull(nameof(_presets), nameof(_presetThemeText))]
+    public void ReplaceAdditionalPresets(IReadOnlyList<ShellThemePreset>? additionalPresets, string? defaultPresetId)
     {
         if (additionalPresets is null || additionalPresets.Count == 0)
         {

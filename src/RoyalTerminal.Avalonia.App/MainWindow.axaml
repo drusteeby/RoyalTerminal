@@ -29,6 +29,16 @@
     <KeyBinding Gesture="Ctrl+Shift+X" Command="{Binding TogglePaneZoomCommand}" />
     <KeyBinding Gesture="Ctrl+PageUp" Command="{Binding CycleTabBackwardCommand}" />
     <KeyBinding Gesture="Ctrl+PageDown" Command="{Binding CycleTabForwardCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+P" Command="{Binding OpenCommandPaletteCommand}" />
+    <KeyBinding Gesture="F11" Command="{Binding ToggleFullscreenCommand}" />
+    <KeyBinding Gesture="Ctrl+OemComma" Command="{Binding OpenSettingsFileCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+Up" Command="{Binding ScrollUpCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+Down" Command="{Binding ScrollDownCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+PageUp" Command="{Binding ScrollUpPageCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+PageDown" Command="{Binding ScrollDownPageCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+Home" Command="{Binding ScrollToTopCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+End" Command="{Binding ScrollToBottomCommand}" />
+    <KeyBinding Gesture="Alt+Shift+B" Command="{Binding ToggleBroadcastInputCommand}" />
     <KeyBinding Gesture="Ctrl+Tab" Command="{Binding CycleTabForwardCommand}" />
     <KeyBinding Gesture="Ctrl+Shift+Tab" Command="{Binding CycleTabBackwardCommand}" />
     <KeyBinding Gesture="Ctrl+Add" Command="{Binding IncreaseFontSizeCommand}" />
@@ -73,6 +83,12 @@
             <NativeMenuItem Header="New _Window"
                             Command="{Binding NewWindowCommand}"
                             Gesture="Ctrl+Shift+N" />
+            <NativeMenuItem Header="Command _Palette..."
+                            Command="{Binding OpenCommandPaletteCommand}"
+                            Gesture="Ctrl+Shift+P" />
+            <NativeMenuItem Header="Open Settings _File"
+                            Command="{Binding OpenSettingsFileCommand}"
+                            Gesture="Ctrl+OemComma" />
             <NativeMenuItem Header="New Tab from _Profile"
                             IsEnabled="{Binding HasMultipleNonDefaultShellProfiles}">
               <NativeMenuItem.Menu>
@@ -254,6 +270,34 @@
             <NativeMenuItem Header="Close Pane or Tab"
                             Command="{Binding ClosePaneOrTabCommand}"
                             Gesture="Ctrl+Shift+W" />
+            <NativeMenuItem Header="Move Tab to New Window"
+                            Command="{Binding MoveTabToNewWindowCommand}" />
+            <NativeMenuItem Header="Toggle _Broadcast Input"
+                            Command="{Binding ToggleBroadcastInputCommand}"
+                            Gesture="Alt+Shift+B" />
+            <NativeMenuItemSeparator />
+            <NativeMenuItem Header="Toggle F_ullscreen"
+                            Command="{Binding ToggleFullscreenCommand}"
+                            Gesture="F11" />
+            <NativeMenuItemSeparator />
+            <NativeMenuItem Header="Scroll Up"
+                            Command="{Binding ScrollUpCommand}"
+                            Gesture="Ctrl+Shift+Up" />
+            <NativeMenuItem Header="Scroll Down"
+                            Command="{Binding ScrollDownCommand}"
+                            Gesture="Ctrl+Shift+Down" />
+            <NativeMenuItem Header="Scroll Up One Page"
+                            Command="{Binding ScrollUpPageCommand}"
+                            Gesture="Ctrl+Shift+PageUp" />
+            <NativeMenuItem Header="Scroll Down One Page"
+                            Command="{Binding ScrollDownPageCommand}"
+                            Gesture="Ctrl+Shift+PageDown" />
+            <NativeMenuItem Header="Scroll to Top"
+                            Command="{Binding ScrollToTopCommand}"
+                            Gesture="Ctrl+Shift+Home" />
+            <NativeMenuItem Header="Scroll to Bottom"
+                            Command="{Binding ScrollToBottomCommand}"
+                            Gesture="Ctrl+Shift+End" />
             <NativeMenuItemSeparator />
             <NativeMenuItem Header="Focus Pane _Left"
                             Command="{Binding FocusPaneLeftCommand}"

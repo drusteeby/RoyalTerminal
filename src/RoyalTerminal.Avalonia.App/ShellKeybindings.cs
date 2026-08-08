@@ -51,6 +51,18 @@ public static class ShellKeybindingActions
     public const string IncreaseFontSize = "increaseFontSize";
     public const string DecreaseFontSize = "decreaseFontSize";
     public const string ResetFontSize = "resetFontSize";
+    public const string ToggleFullscreen = "toggleFullscreen";
+    public const string OpenSettings = "openSettings";
+    public const string ScrollUp = "scrollUp";
+    public const string ScrollDown = "scrollDown";
+    public const string ScrollUpPage = "scrollUpPage";
+    public const string ScrollDownPage = "scrollDownPage";
+    public const string ScrollToTop = "scrollToTop";
+    public const string ScrollToBottom = "scrollToBottom";
+    public const string NewTabProfileIndex = "newTabProfileIndex";
+    public const string MoveTabToNewWindow = "moveTabToNewWindow";
+    public const string CommandPalette = "commandPalette";
+    public const string ToggleBroadcastInput = "toggleBroadcastInput";
 }
 
 /// <summary>
@@ -106,6 +118,18 @@ internal static class ShellKeybindingResolver
             ShellKeybindingActions.IncreaseFontSize => (viewModel.IncreaseFontSizeCommand, null),
             ShellKeybindingActions.DecreaseFontSize => (viewModel.DecreaseFontSizeCommand, null),
             ShellKeybindingActions.ResetFontSize => (viewModel.ResetFontSizeCommand, null),
+            ShellKeybindingActions.ToggleFullscreen => (viewModel.ToggleFullscreenCommand, null),
+            ShellKeybindingActions.OpenSettings => (viewModel.OpenSettingsFileCommand, null),
+            ShellKeybindingActions.ScrollUp => (viewModel.ScrollUpCommand, null),
+            ShellKeybindingActions.ScrollDown => (viewModel.ScrollDownCommand, null),
+            ShellKeybindingActions.ScrollUpPage => (viewModel.ScrollUpPageCommand, null),
+            ShellKeybindingActions.ScrollDownPage => (viewModel.ScrollDownPageCommand, null),
+            ShellKeybindingActions.ScrollToTop => (viewModel.ScrollToTopCommand, null),
+            ShellKeybindingActions.ScrollToBottom => (viewModel.ScrollToBottomCommand, null),
+            ShellKeybindingActions.NewTabProfileIndex => ResolveNewTabProfileIndex(viewModel, binding.Argument),
+            ShellKeybindingActions.MoveTabToNewWindow => (viewModel.MoveTabToNewWindowCommand, null),
+            ShellKeybindingActions.CommandPalette => (viewModel.OpenCommandPaletteCommand, null),
+            ShellKeybindingActions.ToggleBroadcastInput => (viewModel.ToggleBroadcastInputCommand, null),
             _ => ((System.Windows.Input.ICommand?)null, (object?)null),
         };
 
@@ -125,6 +149,18 @@ internal static class ShellKeybindingResolver
         }
 
         return keyBinding;
+    }
+
+    private static (System.Windows.Input.ICommand?, object?) ResolveNewTabProfileIndex(
+        MainWindowViewModel viewModel,
+        string? argument)
+    {
+        if (!int.TryParse(argument, NumberStyles.Integer, CultureInfo.InvariantCulture, out int index) || index < 0)
+        {
+            return (null, null);
+        }
+
+        return (viewModel.NewTabFromIndexCommand, index.ToString(CultureInfo.InvariantCulture));
     }
 
     private static (System.Windows.Input.ICommand?, object?) ResolveSwitchToTab(

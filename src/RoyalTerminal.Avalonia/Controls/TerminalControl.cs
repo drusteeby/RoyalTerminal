@@ -600,6 +600,12 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
     /// <summary>Raised when the terminal title changes.</summary>
     public event EventHandler<string>? TitleChanged;
 
+    /// <summary>
+    /// Raised on Ctrl+mouse-wheel with the zoom direction (+1 grow, -1
+    /// shrink) so the host can adjust its font size state.
+    /// </summary>
+    public event EventHandler<int>? FontZoomRequested;
+
     /// <summary>Raised when the terminal bell rings.</summary>
     public event EventHandler? Bell;
 
@@ -4889,6 +4895,15 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
 
     private void HandlePointerWheelChangedCore(PointerWheelEventArgs e)
     {
+        // Ctrl+wheel zooms the font (Konsole/Kitty/GNOME Terminal convention)
+        // and always wins over app mouse-reporting.
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Delta.Y != 0 && FontZoomRequested is not null)
+        {
+            FontZoomRequested.Invoke(this, e.Delta.Y > 0 ? 1 : -1);
+            e.Handled = true;
+            return;
+        }
+
         Point controlPoint = e.GetPosition(this);
         bool insideContent = TryTranslatePointToTerminalContent(controlPoint, out Point point);
         if (IsMouseReportingActiveForInput())
