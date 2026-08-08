@@ -86,7 +86,12 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
     private const int ComparableRowStackCharLimit = 256;
     // ConPTY can emit repaint fragments for every intermediate drag width.
     // Keep local reflow immediate, but only send the settled PTY size downstream.
-    private static readonly TimeSpan WindowsPtyTransportResizeDebounceInterval = TimeSpan.FromMilliseconds(75);
+    // The PTY (SIGWINCH) resize debounce window. The timer restarts on every
+    // layout resize during a drag, so a continuous splitter/window drag emits
+    // exactly one SIGWINCH at the trailing edge and the shell redraws its
+    // prompt once. 120 ms comfortably outlasts frame-to-frame gaps without a
+    // perceptible lag after the drag ends.
+    private static readonly TimeSpan WindowsPtyTransportResizeDebounceInterval = TimeSpan.FromMilliseconds(120);
     // Managed VT parsing already yields in small UI batches, so draining at
     // Background priority avoids starvation without monopolizing the UI thread.
     // Input priority instead of Background: background-priority drain slices
@@ -1740,78 +1745,18 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
 
     private void ApplyGridFromProperties()
     {
-        // Programmatic grid changes always apply immediately and drop any
-        // pending layout-driven coalesced resize.
-        CancelPendingLayoutGridResize();
         Size contentSize = GetTerminalContentSize(Bounds.Size);
         ApplyTerminalSize(Columns, Rows, contentSize.Width, contentSize.Height, raiseTerminalResized: true, invalidateMeasure: true);
     }
 
-    private (int Columns, int Rows, Size ContentSize)? _pendingLayoutGridResize;
-    private DispatcherTimer? _layoutGridResizeTimer;
-    private long _lastLayoutGridApplyTimestamp;
-    private static readonly TimeSpan LayoutGridResizeDebounceInterval = TimeSpan.FromMilliseconds(90);
-    private static readonly TimeSpan LayoutGridResizeRapidWindow = TimeSpan.FromMilliseconds(200);
-
     /// <summary>
-    /// Rapid successive layout grid changes coalesce; isolated changes apply
-    /// immediately so ordinary resizes stay instant.
+    /// Applies any pending debounced session resize notification (SIGWINCH)
+    /// immediately. Equivalent to the debounce timer firing; useful for
+    /// hosts and harnesses that drive time manually.
     /// </summary>
-    private bool ShouldCoalesceLayoutGridResize()
+    public void FlushPendingResizes()
     {
-        // The reflow/redraw race needs a live shell reacting to SIGWINCH;
-        // without a session, resizes stay immediate (and tests deterministic).
-        if (!TerminalSessionService.HasActiveTransport && !HasPty)
-        {
-            return false;
-        }
-
-        if (_pendingLayoutGridResize is not null)
-        {
-            return true;
-        }
-
-        if (!_hasValidLayoutGrid || _lastLayoutGridApplyTimestamp == 0)
-        {
-            return false;
-        }
-
-        return Stopwatch.GetElapsedTime(_lastLayoutGridApplyTimestamp) < LayoutGridResizeRapidWindow;
-    }
-
-    private DispatcherTimer EnsureLayoutGridResizeTimer()
-    {
-        if (_layoutGridResizeTimer is not null)
-        {
-            return _layoutGridResizeTimer;
-        }
-
-        DispatcherTimer timer = new(DispatcherPriority.Input)
-        {
-            Interval = LayoutGridResizeDebounceInterval,
-        };
-        timer.Tick += (_, _) => FlushPendingLayoutGridResize();
-        _layoutGridResizeTimer = timer;
-        return timer;
-    }
-
-    private void FlushPendingLayoutGridResize()
-    {
-        _layoutGridResizeTimer?.Stop();
-        if (_pendingLayoutGridResize is not { } pending)
-        {
-            return;
-        }
-
-        _pendingLayoutGridResize = null;
-        _lastLayoutGridApplyTimestamp = Stopwatch.GetTimestamp();
-        ApplyGridFromLayout(pending.Columns, pending.Rows, pending.ContentSize);
-    }
-
-    private void CancelPendingLayoutGridResize()
-    {
-        _layoutGridResizeTimer?.Stop();
-        _pendingLayoutGridResize = null;
+        FlushPendingTransportResize();
     }
 
     private void ApplyTerminalSize(
@@ -2134,7 +2079,7 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
             return _transportResizeDebounceTimer;
         }
 
-        DispatcherTimer timer = new(DispatcherPriority.Background)
+        DispatcherTimer timer = new(DispatcherPriority.Input)
         {
             Interval = WindowsPtyTransportResizeDebounceInterval,
         };
@@ -2157,10 +2102,6 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
             Dispatcher.UIThread.InvokeAsync(FlushPendingTransportResize).GetAwaiter().GetResult();
             return;
         }
-
-        // A coalesced layout grid change must land before the session
-        // notification so input always reaches a settled terminal size.
-        FlushPendingLayoutGridResize();
 
         _transportResizeDebounceTimer?.Stop();
         if (_pendingTransportResize is not { } dimensions)
@@ -2241,7 +2182,6 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
         base.OnDetachedFromVisualTree(e);
         _containingScrollViewer = null;
         CancelPendingTransportResize();
-        CancelPendingLayoutGridResize();
         StopMouseSelectionDrag();
         EnsureCursorBlinkTimerRunning(false);
         RestoreReservedAncestorKeyBindings();
@@ -2472,38 +2412,16 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
 
             if (newCols != Columns || newRows != Rows)
             {
-                // Coalesce rapid layout-driven grid changes (splitter or
-                // window drags): the first change applies immediately, but
-                // while changes keep arriving the grid is frozen and a
-                // single resize+reflow (followed by the debounced PTY
-                // notification) runs at the trailing edge. Reflowing and
-                // signaling the shell at every intermediate width lets
-                // readline's redraw race the reflow and shred the prompt.
-                if (ShouldCoalesceLayoutGridResize())
-                {
-                    // Restart the trailing-edge timer only when the target
-                    // changes: layout passes can repeat with identical
-                    // bounds, and restarting on every pass would starve the
-                    // flush forever.
-                    (int, int, Size) target = (newCols, newRows, contentRect.Size);
-                    if (_pendingLayoutGridResize != target)
-                    {
-                        _pendingLayoutGridResize = target;
-                        DispatcherTimer timer = EnsureLayoutGridResizeTimer();
-                        timer.Stop();
-                        timer.Start();
-                    }
-                }
-                else
-                {
-                    CancelPendingLayoutGridResize();
-                    _lastLayoutGridApplyTimestamp = Stopwatch.GetTimestamp();
-                    ApplyGridFromLayout(newCols, newRows, contentRect.Size);
-                }
+                // Apply the visual grid/reflow immediately every step so a
+                // splitter or window drag looks live. The PTY (SIGWINCH)
+                // notification is debounced separately (ResizeTransportSession)
+                // so the shell only redraws its prompt once at the final size
+                // instead of at every intermediate width — the latter races
+                // readline's redraw against reflow and shreds the prompt.
+                ApplyGridFromLayout(newCols, newRows, contentRect.Size);
             }
             else
             {
-                CancelPendingLayoutGridResize();
                 ApplyTerminalSize(newCols, newRows, contentRect.Width, contentRect.Height, raiseTerminalResized: false, invalidateMeasure: false);
             }
         }
