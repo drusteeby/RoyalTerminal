@@ -987,9 +987,12 @@ public sealed class MainWindowViewModel : ReactiveObject
     public double TitleBarRightDecorationReserveWidth => OperatingSystem.IsMacOS() ? 0d : 184d;
 
     /// <summary>
-    /// Gets a value indicating whether the app-owned Windows caption buttons should be shown.
+    /// Gets a value indicating whether the app-owned window caption buttons
+    /// (minimize / maximize / close) should be shown. Used on Windows and
+    /// Linux, where the app draws integrated window controls; hidden on
+    /// macOS, which keeps its native traffic-light controls.
     /// </summary>
-    public bool IsWindowsCaptionButtonStripVisible => OperatingSystem.IsWindows();
+    public bool IsWindowsCaptionButtonStripVisible => !OperatingSystem.IsMacOS();
 
     public bool IsSshHostKeyPromptVisible
     {
