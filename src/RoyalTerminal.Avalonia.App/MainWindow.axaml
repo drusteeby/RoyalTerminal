@@ -228,6 +228,9 @@
             <NativeMenuItem Header="_Previous Tab"
                             Command="{Binding CycleTabBackwardCommand}"
                             Gesture="Ctrl+Shift+Tab" />
+            <NativeMenuItem Header="D_uplicate Tab"
+                            Command="{Binding DuplicateTabCommand}"
+                            Gesture="Ctrl+Shift+D" />
             <NativeMenuItemSeparator />
             <NativeMenuItem Header="Split Pane _Right"
                             Command="{Binding SplitPaneRightCommand}"
@@ -235,9 +238,18 @@
             <NativeMenuItem Header="Split Pane _Down"
                             Command="{Binding SplitPaneDownCommand}"
                             Gesture="Alt+Shift+OemMinus" />
+            <NativeMenuItem Header="Split Pane _Auto"
+                            Command="{Binding SplitPaneAutoCommand}"
+                            Gesture="Alt+Shift+D" />
+            <NativeMenuItem Header="_Zoom Pane"
+                            Command="{Binding TogglePaneZoomCommand}"
+                            Gesture="Ctrl+Shift+X" />
             <NativeMenuItemSeparator />
             <NativeMenuItem Header="Close Current Pane"
                             Command="{Binding CloseCurrentPaneCommand}" />
+            <NativeMenuItem Header="Close Pane or Tab"
+                            Command="{Binding ClosePaneOrTabCommand}"
+                            Gesture="Ctrl+Shift+W" />
             <NativeMenuItemSeparator />
             <NativeMenuItem Header="Focus Pane _Left"
                             Command="{Binding FocusPaneLeftCommand}"

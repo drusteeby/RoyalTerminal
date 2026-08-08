@@ -154,12 +154,14 @@ internal sealed class MainWindowController
         Window window,
         MainWindowViewModel viewModel,
         ITerminalPaneSplitPolicy? paneSplitPolicy = null,
+        ITerminalSessionProfileStore? settingsProfileStore = null,
         IAppPreferencesStore? appPreferencesStore = null)
         : this(
             window,
             viewModel,
             new TerminalModeCapabilityResolver(),
             TerminalModeResolver.Default,
+            settingsProfileStore: settingsProfileStore,
             paneSplitPolicy: paneSplitPolicy,
             appPreferencesStore: appPreferencesStore)
     {

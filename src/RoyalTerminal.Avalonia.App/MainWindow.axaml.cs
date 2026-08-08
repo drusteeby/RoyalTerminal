@@ -64,6 +64,7 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
                 this,
                 ViewModel!,
                 PaneSplitPolicy,
+                settingsProfileStore: shellOptions.SessionProfileStore,
                 appPreferencesStore: shellOptions.AppPreferencesStore);
             disposables.Add(backdropCoordinator.Activate());
             disposables.Add(iconThemeCoordinator.Activate());

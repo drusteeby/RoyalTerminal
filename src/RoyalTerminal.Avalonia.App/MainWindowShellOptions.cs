@@ -5,6 +5,7 @@
 namespace RoyalTerminal.Avalonia.App;
 
 using RoyalTerminal.Avalonia.App.Services;
+using RoyalTerminal.Terminal;
 
 /// <summary>
 /// Describes a host-supplied terminal theme preset in Ghostty theme text format
@@ -41,4 +42,10 @@ public sealed class MainWindowShellOptions
     /// mode. When null, built-in per-mode defaults apply.
     /// </summary>
     public string? DefaultThemePresetId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the session profile store backing the shell's profile
+    /// catalog. When null, the platform default store is used.
+    /// </summary>
+    public ITerminalSessionProfileStore? SessionProfileStore { get; set; }
 }
