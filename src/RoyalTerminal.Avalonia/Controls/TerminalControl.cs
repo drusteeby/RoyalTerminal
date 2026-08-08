@@ -2607,7 +2607,60 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
         FinalizeOutputBatchOnUiThread();
     }
 
+    private bool _throttledFinalizePending;
+    private long _lastFinalizeTimestamp;
+    private static readonly TimeSpan FinalizeFrameInterval = TimeSpan.FromMilliseconds(16);
+
+    /// <summary>
+    /// Coalesces output finalization (scroll sync, cursor, selection,
+    /// invalidate) to at most once per display frame. The screen model is
+    /// already updated by the background parser, so intermediate finalize
+    /// passes between frames are wasted work — under a flood they dominate
+    /// the UI thread and starve both rendering and PTY draining.
+    ///
+    /// This is driven by the frequent output-drain dispatches themselves
+    /// rather than a dispatcher timer: a render/background-priority timer is
+    /// starved by the high-priority drain during a flood. When less than a
+    /// frame has elapsed the finalize is marked owed and skipped; the next
+    /// eligible dispatch, or the backlog-empty flush, runs it.
+    /// </summary>
+    private void ScheduleThrottledFinalize()
+    {
+        TimeSpan since = _lastFinalizeTimestamp == 0
+            ? TimeSpan.MaxValue
+            : Stopwatch.GetElapsedTime(_lastFinalizeTimestamp);
+        if (since >= FinalizeFrameInterval)
+        {
+            _lastFinalizeTimestamp = Stopwatch.GetTimestamp();
+            _throttledFinalizePending = false;
+            FinalizeOutputBatchOnUiThread();
+        }
+        else
+        {
+            _throttledFinalizePending = true;
+        }
+    }
+
+    /// <summary>
+    /// Runs an owed throttled finalize immediately (called when the output
+    /// backlog empties, so the final frame always lands without waiting).
+    /// </summary>
+    private void FlushThrottledFinalize()
+    {
+        _lastFinalizeTimestamp = Stopwatch.GetTimestamp();
+        _throttledFinalizePending = false;
+        FinalizeOutputBatchOnUiThread();
+    }
+
     private void FinalizeOutputBatchOnUiThread()
+    {
+        Rendering.FloodProfiler.Count("finalize.calls");
+        long profFinalize = Rendering.FloodProfiler.Start();
+        FinalizeOutputBatchOnUiThreadCore();
+        Rendering.FloodProfiler.Stop("finalize.total", profFinalize);
+    }
+
+    private void FinalizeOutputBatchOnUiThreadCore()
     {
         if (_screen is null)
         {
@@ -2643,7 +2696,12 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
             }
 
             UpdateRendererCursorForViewportLocked();
-            ApplyAnchoredSelectionToRendererLocked();
+            // Render-facing parity (highlight spans, hovered link, opacity,
+            // selection) only needs to be current when we actually render.
+            // Rendering is coalesced to one frame, so refreshing parity here
+            // once per finalize — instead of on every parse batch under the
+            // screen lock — shortens the parse lock hold and cuts contention.
+            UpdateRendererParityStateLocked();
         }
 
         UpdateAutoScrollPinnedToBottom();
@@ -2661,9 +2719,12 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
 
         bool resetMouseSelection = false;
         bool eraseDisplayClearsLiveViewport = false;
+        long profParse = Rendering.FloodProfiler.Start();
+        long profParseLock = Rendering.FloodProfiler.Start();
         // Lock screen during VT processing — composition thread reads cells concurrently
         lock (_screen.SyncRoot)
         {
+            Rendering.FloodProfiler.Stop("parse.lockwait", profParseLock);
             bool mouseModeChanged = _mouseModeTracker.Process(data);
             if (mouseModeChanged && IsMouseReportingActiveForInput())
             {
@@ -2724,10 +2785,13 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
                 }
             }
 
-            TryUpdateHoveredLinkFromPointerLocked();
-            UpdateRendererParityStateLocked();
+            // Renderer parity (highlight spans, hovered link, selection,
+            // opacity) is refreshed once per throttled finalize, not on every
+            // parse batch — this keeps the screen lock held only for the VT
+            // write during parsing, reducing contention with the compositor.
         }
 
+        Rendering.FloodProfiler.Stop("parse.total", profParse);
         return new TerminalOutputProcessResult(resetMouseSelection, eraseDisplayClearsLiveViewport);
     }
 
@@ -2742,8 +2806,11 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
 
         bool resetMouseSelection = false;
         bool eraseDisplayClearsLiveViewport = false;
+        long profParse = Rendering.FloodProfiler.Start();
+        long profParseLock = Rendering.FloodProfiler.Start();
         lock (_screen.SyncRoot)
         {
+            Rendering.FloodProfiler.Stop("parse.lockwait", profParseLock);
             int restoreScrollOffset = -1;
             ulong? restoreViewportOffsetRows = null;
             if (TryGetViewportScrollSource(out ITerminalViewportScrollSource? viewportScrollSource))
@@ -2808,10 +2875,13 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
                 }
             }
 
-            TryUpdateHoveredLinkFromPointerLocked();
-            UpdateRendererParityStateLocked();
+            // Renderer parity (highlight spans, hovered link, selection,
+            // opacity) is refreshed once per throttled finalize, not on every
+            // parse batch — this keeps the screen lock held only for the VT
+            // write during parsing, reducing contention with the compositor.
         }
 
+        Rendering.FloodProfiler.Stop("parse.total", profParse);
         return new TerminalOutputProcessResult(resetMouseSelection, eraseDisplayClearsLiveViewport);
     }
 
@@ -7034,9 +7104,19 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
             processedBytes += nextBatch.TotalBytes;
         }
 
-        if (processedChunks > 0)
+        if (scheduleContinuation)
         {
-            FinalizeOutputBatchOnUiThread();
+            // Flood ongoing: coalesce finalize to one per frame.
+            if (processedChunks > 0)
+            {
+                ScheduleThrottledFinalize();
+            }
+        }
+        else if (processedChunks > 0 || _throttledFinalizePending)
+        {
+            // Backlog empty: land the final frame now (covers any finalize
+            // owed but skipped by the throttle during the flood).
+            FlushThrottledFinalize();
         }
 
         if (scheduleContinuation)

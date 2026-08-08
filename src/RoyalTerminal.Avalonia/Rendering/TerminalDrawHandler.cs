@@ -99,6 +99,7 @@ public class TerminalDrawHandler : CompositionCustomVisualHandler
 
     public override void OnRender(ImmediateDrawingContext context)
     {
+        long profRender = FloodProfiler.Start();
         try
         {
             var renderer = _renderer;
@@ -121,6 +122,8 @@ public class TerminalDrawHandler : CompositionCustomVisualHandler
                 return;
             }
 
+            long profLockWait = FloodProfiler.Start();
+
             Rect renderBounds = GetRenderBounds();
             RenderTargetScale renderScale = GetCanvasScale(
                 renderBounds,
@@ -142,6 +145,7 @@ public class TerminalDrawHandler : CompositionCustomVisualHandler
 
             lock (screen.SyncRoot)
             {
+                FloodProfiler.Stop("render.lockwait", profLockWait);
                 background = new SKColor(screen.DefaultBackground);
                 if (!EnsureTerminalSurface(width, height, renderScale, grContext))
                 {
@@ -236,6 +240,7 @@ public class TerminalDrawHandler : CompositionCustomVisualHandler
         }
         finally
         {
+            FloodProfiler.Stop("render.total", profRender);
             _pendingRender = ShouldContinueShaderAnimation();
             if (_pendingRender)
             {
