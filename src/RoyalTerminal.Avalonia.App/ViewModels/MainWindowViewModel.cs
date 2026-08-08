@@ -295,6 +295,10 @@ public sealed class MainWindowViewModel : ReactiveObject
         FocusPaneInteraction = new Interaction<TerminalPaneDirection, Unit>();
         ResizePaneInteraction = new Interaction<TerminalPaneDirection, Unit>();
         CloseCurrentPaneInteraction = new Interaction<Unit, Unit>();
+        TogglePaneZoomInteraction = new Interaction<Unit, Unit>();
+        DuplicateTabInteraction = new Interaction<Unit, Unit>();
+        SplitPaneAutoInteraction = new Interaction<Unit, Unit>();
+        ClosePaneOrTabInteraction = new Interaction<Unit, Unit>();
         AcceptSshHostKeyCommand = ReactiveCommand.Create(AcceptSshHostKeyPrompt);
         DeclineSshHostKeyCommand = ReactiveCommand.Create(DeclineSshHostKeyPrompt);
 
@@ -403,6 +407,14 @@ public sealed class MainWindowViewModel : ReactiveObject
         CloseCurrentPaneCommand = ReactiveCommand.CreateFromObservable(
             () => CloseCurrentPaneInteraction.Handle(Unit.Default),
             canCloseCurrentPane);
+        TogglePaneZoomCommand = ReactiveCommand.CreateFromObservable(
+            () => TogglePaneZoomInteraction.Handle(Unit.Default));
+        DuplicateTabCommand = ReactiveCommand.CreateFromObservable(
+            () => DuplicateTabInteraction.Handle(Unit.Default));
+        SplitPaneAutoCommand = ReactiveCommand.CreateFromObservable(
+            () => SplitPaneAutoInteraction.Handle(Unit.Default));
+        ClosePaneOrTabCommand = ReactiveCommand.CreateFromObservable(
+            () => ClosePaneOrTabInteraction.Handle(Unit.Default));
 
         UpdateThemePresetButtonText();
     }
@@ -448,6 +460,14 @@ public sealed class MainWindowViewModel : ReactiveObject
     public Interaction<TerminalPaneDirection, Unit> FocusPaneInteraction { get; }
     public Interaction<TerminalPaneDirection, Unit> ResizePaneInteraction { get; }
     public Interaction<Unit, Unit> CloseCurrentPaneInteraction { get; }
+
+    public Interaction<Unit, Unit> TogglePaneZoomInteraction { get; }
+
+    public Interaction<Unit, Unit> DuplicateTabInteraction { get; }
+
+    public Interaction<Unit, Unit> SplitPaneAutoInteraction { get; }
+
+    public Interaction<Unit, Unit> ClosePaneOrTabInteraction { get; }
 
     public ReactiveCommand<Unit, Unit> AcceptSshHostKeyCommand { get; }
     public ReactiveCommand<Unit, Unit> DeclineSshHostKeyCommand { get; }
@@ -518,6 +538,18 @@ public sealed class MainWindowViewModel : ReactiveObject
     public ReactiveCommand<Unit, Unit> ResizePaneUpCommand { get; }
     public ReactiveCommand<Unit, Unit> ResizePaneDownCommand { get; }
     public ReactiveCommand<Unit, Unit> CloseCurrentPaneCommand { get; }
+
+    /// <summary>Gets the command toggling zoom (maximize within the tab) for the active pane.</summary>
+    public ReactiveCommand<Unit, Unit> TogglePaneZoomCommand { get; }
+
+    /// <summary>Gets the command duplicating the active tab with its profile and working directory.</summary>
+    public ReactiveCommand<Unit, Unit> DuplicateTabCommand { get; }
+
+    /// <summary>Gets the command splitting the active pane along its longer axis.</summary>
+    public ReactiveCommand<Unit, Unit> SplitPaneAutoCommand { get; }
+
+    /// <summary>Gets the command closing the active pane, or the tab when it is the last pane.</summary>
+    public ReactiveCommand<Unit, Unit> ClosePaneOrTabCommand { get; }
 
     public TerminalSettingsPanelState SettingsPanelState => _settingsPanelState ??= new TerminalSettingsPanelState();
 

@@ -1416,12 +1416,19 @@
         <MenuItem Header="_Paste" InputGesture="Ctrl+Shift+V" Command="{Binding PasteClipboardCommand}" />
         <Separator />
         <MenuItem Header="Select _All" InputGesture="Ctrl+Shift+A" Command="{Binding SelectAllCommand}" />
+        <MenuItem Header="_Find..." InputGesture="Ctrl+Shift+F" Command="{Binding ToggleSearchPanelCommand}" />
+        <Separator />
+        <MenuItem Header="Split Pane _Right" InputGesture="Alt+Shift+OemPlus" Command="{Binding SplitPaneRightCommand}" />
+        <MenuItem Header="Split Pane _Down" InputGesture="Alt+Shift+OemMinus" Command="{Binding SplitPaneDownCommand}" />
+        <MenuItem Header="_Zoom Pane" InputGesture="Ctrl+Shift+X" Command="{Binding TogglePaneZoomCommand}" />
+        <MenuItem Header="Close Pane" InputGesture="Ctrl+Shift+W" Command="{Binding ClosePaneOrTabCommand}" />
         <Separator />
         <MenuItem Header="_New Tab" InputGesture="Ctrl+T" Command="{Binding NewTabCommand}">
           <MenuItem.Icon>
             <PathIcon Data="{StaticResource Icon.AddSquareMultipleRegular}" />
           </MenuItem.Icon>
         </MenuItem>
+        <MenuItem Header="D_uplicate Tab" InputGesture="Ctrl+Shift+D" Command="{Binding DuplicateTabCommand}" />
         <MenuItem Header="C_lose Tab" InputGesture="Ctrl+W" Command="{Binding CloseCurrentTabCommand}" />
       </ContextMenu>
     </Grid.ContextMenu>

@@ -19,7 +19,15 @@
 
   <Window.KeyBindings>
     <KeyBinding Gesture="Ctrl+T" Command="{Binding NewTabCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+T" Command="{Binding NewTabCommand}" />
     <KeyBinding Gesture="Ctrl+W" Command="{Binding CloseCurrentTabCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+W" Command="{Binding ClosePaneOrTabCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+D" Command="{Binding DuplicateTabCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+F" Command="{Binding ToggleSearchPanelCommand}" />
+    <KeyBinding Gesture="Alt+Shift+D" Command="{Binding SplitPaneAutoCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+X" Command="{Binding TogglePaneZoomCommand}" />
+    <KeyBinding Gesture="Ctrl+PageUp" Command="{Binding CycleTabBackwardCommand}" />
+    <KeyBinding Gesture="Ctrl+PageDown" Command="{Binding CycleTabForwardCommand}" />
     <KeyBinding Gesture="Ctrl+Tab" Command="{Binding CycleTabForwardCommand}" />
     <KeyBinding Gesture="Ctrl+Shift+Tab" Command="{Binding CycleTabBackwardCommand}" />
     <KeyBinding Gesture="Ctrl+Add" Command="{Binding IncreaseFontSizeCommand}" />

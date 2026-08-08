@@ -571,12 +571,14 @@ internal sealed class MainWindowController
 
         disposables.Add(_viewModel.SplitPaneInteraction.RegisterHandler(context =>
         {
+            UnzoomPane(focusTerminal: false);
             SplitActivePane(context.Input);
             context.SetOutput(Unit.Default);
         }));
 
         disposables.Add(_viewModel.FocusPaneInteraction.RegisterHandler(context =>
         {
+            UnzoomPane(focusTerminal: false);
             FocusPane(context.Input);
             context.SetOutput(Unit.Default);
         }));
@@ -589,7 +591,32 @@ internal sealed class MainWindowController
 
         disposables.Add(_viewModel.CloseCurrentPaneInteraction.RegisterHandler(context =>
         {
+            UnzoomPane(focusTerminal: false);
             CloseCurrentPane();
+            context.SetOutput(Unit.Default);
+        }));
+
+        disposables.Add(_viewModel.TogglePaneZoomInteraction.RegisterHandler(context =>
+        {
+            TogglePaneZoom();
+            context.SetOutput(Unit.Default);
+        }));
+
+        disposables.Add(_viewModel.DuplicateTabInteraction.RegisterHandler(context =>
+        {
+            DuplicateActiveTab();
+            context.SetOutput(Unit.Default);
+        }));
+
+        disposables.Add(_viewModel.SplitPaneAutoInteraction.RegisterHandler(context =>
+        {
+            SplitActivePaneAuto();
+            context.SetOutput(Unit.Default);
+        }));
+
+        disposables.Add(_viewModel.ClosePaneOrTabInteraction.RegisterHandler(context =>
+        {
+            ClosePaneOrTab();
             context.SetOutput(Unit.Default);
         }));
 
@@ -2111,6 +2138,7 @@ internal sealed class MainWindowController
         tab.CloseButton.CommandParameter = tab.Index;
         headerButton.Command = _viewModel.ActivateTabCommand;
         headerButton.CommandParameter = tab.Index;
+        ConfigureTabHeaderInteractions(tab);
 
         _tabs.Add(tab);
         deferredContainer.IsVisible = false;
@@ -2635,6 +2663,7 @@ internal sealed class MainWindowController
         tab.CloseButton.CommandParameter = tab.Index;
         headerButton.Command = _viewModel.ActivateTabCommand;
         headerButton.CommandParameter = tab.Index;
+        ConfigureTabHeaderInteractions(tab);
 
         _tabs.Add(tab);
 
@@ -2694,6 +2723,7 @@ internal sealed class MainWindowController
         tab.CloseButton.CommandParameter = tab.Index;
         headerButton.Command = _viewModel.ActivateTabCommand;
         headerButton.CommandParameter = tab.Index;
+        ConfigureTabHeaderInteractions(tab);
 
         _tabs.Add(tab);
         container.IsVisible = false;
@@ -2799,6 +2829,14 @@ internal sealed class MainWindowController
 
         standaloneControl.TitleChanged += (_, title) =>
         {
+            // Windows Terminal behavior: the tab title follows the terminal
+            // (OSC) title unless the user renamed the tab explicitly.
+            if (!string.IsNullOrWhiteSpace(title) &&
+                FindTabForControl(standaloneControl) is { HasCustomTitle: false } titledTab)
+            {
+                titledTab.UpdateTitle(title.Trim());
+            }
+
             AppendEventLog($"[{GetTabDisplayName(standaloneControl)}] Title changed to '{title}'.");
             if (ReferenceEquals(GetActiveStandaloneControl(), standaloneControl) && _viewModel.ShowGhosttyDiagnostics)
             {
@@ -3674,6 +3712,454 @@ internal sealed class MainWindowController
         return headerButton;
     }
 
+    private TerminalTab? _dragReorderTab;
+    private Point _dragReorderStart;
+    private bool _dragReorderActive;
+
+    /// <summary>
+    /// Wires mouse-centric tab header interactions: middle-click close,
+    /// double-click rename, drag-to-reorder, and the tab context menu.
+    /// </summary>
+    private void ConfigureTabHeaderInteractions(TerminalTab tab)
+    {
+        Button headerButton = tab.HeaderButton;
+
+        // Middle-click closes the tab (browser-style).
+        headerButton.AddHandler(InputElement.PointerReleasedEvent, (_, e) =>
+        {
+            if (e.InitialPressMouseButton == MouseButton.Middle)
+            {
+                e.Handled = true;
+                CloseTab(tab);
+            }
+        }, RoutingStrategies.Tunnel);
+
+        // Double-click renames the tab inline.
+        headerButton.AddHandler(InputElement.DoubleTappedEvent, (_, e) =>
+        {
+            if (e.Source is Visual source &&
+                source.FindAncestorOfType<Button>(includeSelf: true) is { } sourceButton &&
+                ReferenceEquals(sourceButton, tab.CloseButton))
+            {
+                return;
+            }
+
+            e.Handled = true;
+            BeginTabRename(tab);
+        }, RoutingStrategies.Bubble);
+
+        AttachTabDragReorder(tab);
+        headerButton.ContextMenu = BuildTabContextMenu(tab);
+    }
+
+    /// <summary>
+    /// Replaces the tab title text with an inline editor. Enter commits,
+    /// Escape cancels, focus loss commits.
+    /// </summary>
+    private void BeginTabRename(TerminalTab tab)
+    {
+        if (tab.HeaderButton.Content is not StackPanel headerContent ||
+            headerContent.Children.OfType<TextBox>().Any())
+        {
+            return;
+        }
+
+        int titleIndex = headerContent.Children.IndexOf(tab.TitleText);
+        if (titleIndex < 0)
+        {
+            return;
+        }
+
+        TextBox editor = new()
+        {
+            Text = tab.Title,
+            FontSize = 12,
+            MinWidth = 96,
+            MaxWidth = 240,
+            VerticalAlignment = VerticalAlignment.Center,
+            Padding = new Thickness(4, 1),
+        };
+        WindowDecorationProperties.SetElementRole(editor, WindowDecorationsElementRole.User);
+
+        bool completed = false;
+        void CompleteRename(bool apply)
+        {
+            if (completed)
+            {
+                return;
+            }
+
+            completed = true;
+            string newTitle = editor.Text?.Trim() ?? string.Empty;
+            headerContent.Children.Remove(editor);
+            tab.TitleText.IsVisible = true;
+            if (apply && !string.IsNullOrEmpty(newTitle) && !string.Equals(newTitle, tab.Title, StringComparison.Ordinal))
+            {
+                tab.SetCustomTitle(newTitle);
+                AppendEventLog($"[{newTitle}] Tab renamed.");
+            }
+
+            FocusActiveTerminal();
+        }
+
+        editor.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                e.Handled = true;
+                CompleteRename(apply: true);
+            }
+            else if (e.Key == Key.Escape)
+            {
+                e.Handled = true;
+                CompleteRename(apply: false);
+            }
+        };
+        editor.LostFocus += (_, _) => CompleteRename(apply: true);
+
+        tab.TitleText.IsVisible = false;
+        headerContent.Children.Insert(titleIndex + 1, editor);
+        editor.Focus();
+        editor.SelectAll();
+    }
+
+    private void FocusActiveTerminal()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            Control? focusTarget = _activePaneControl ?? _activeTab?.Control;
+            focusTarget?.Focus();
+        }, DispatcherPriority.Input);
+    }
+
+    /// <summary>
+    /// Enables horizontal drag-to-reorder on a tab header.
+    /// </summary>
+    private void AttachTabDragReorder(TerminalTab tab)
+    {
+        const double DragThreshold = 8d;
+        Button headerButton = tab.HeaderButton;
+
+        headerButton.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
+        {
+            if (e.GetCurrentPoint(headerButton).Properties.IsLeftButtonPressed)
+            {
+                _dragReorderTab = tab;
+                _dragReorderStart = e.GetPosition(_tabStrip);
+                _dragReorderActive = false;
+            }
+        }, RoutingStrategies.Tunnel);
+
+        headerButton.AddHandler(InputElement.PointerMovedEvent, (_, e) =>
+        {
+            if (!ReferenceEquals(_dragReorderTab, tab) ||
+                !e.GetCurrentPoint(headerButton).Properties.IsLeftButtonPressed)
+            {
+                return;
+            }
+
+            Point position = e.GetPosition(_tabStrip);
+            if (!_dragReorderActive)
+            {
+                if (Math.Abs(position.X - _dragReorderStart.X) < DragThreshold)
+                {
+                    return;
+                }
+
+                _dragReorderActive = true;
+                e.Pointer.Capture(headerButton);
+            }
+
+            int currentIndex = _tabs.IndexOf(tab);
+            int targetIndex = ComputeDragTargetIndex(position.X, currentIndex);
+            if (targetIndex != currentIndex && targetIndex >= 0 && targetIndex < _tabs.Count)
+            {
+                _tabs.Move(currentIndex, targetIndex);
+                QueueTabStripScrollStateUpdate();
+            }
+        }, RoutingStrategies.Tunnel, handledEventsToo: true);
+
+        headerButton.AddHandler(InputElement.PointerReleasedEvent, (_, e) =>
+        {
+            if (_dragReorderActive && ReferenceEquals(_dragReorderTab, tab))
+            {
+                e.Handled = true;
+                AppendEventLog($"[{tab.Title}] Tab reordered.");
+            }
+
+            _dragReorderTab = null;
+            _dragReorderActive = false;
+        }, RoutingStrategies.Tunnel, handledEventsToo: true);
+    }
+
+    /// <summary>
+    /// Maps a pointer X position inside the tab strip to the tab index whose
+    /// slot contains it, comparing against accumulated header midpoints.
+    /// </summary>
+    private int ComputeDragTargetIndex(double pointerX, int currentIndex)
+    {
+        double accumulated = 0d;
+        for (int i = 0; i < _tabs.Count; i++)
+        {
+            double width = _tabs[i].HeaderButton.Bounds.Width;
+            double midpoint = accumulated + width / 2d;
+            if (pointerX < midpoint)
+            {
+                return i;
+            }
+
+            accumulated += width;
+        }
+
+        return _tabs.Count - 1;
+    }
+
+    private ContextMenu BuildTabContextMenu(TerminalTab tab)
+    {
+        MenuItem renameItem = new() { Header = "Rename Tab" };
+        renameItem.Click += (_, _) => BeginTabRename(tab);
+
+        MenuItem duplicateItem = new() { Header = "Duplicate Tab" };
+        duplicateItem.Click += (_, _) => DuplicateTab(tab);
+
+        MenuItem closeItem = new() { Header = "Close Tab", InputGesture = new KeyGesture(Key.W, KeyModifiers.Control) };
+        closeItem.Click += (_, _) => CloseTab(tab);
+
+        MenuItem closeOthersItem = new() { Header = "Close Other Tabs" };
+        closeOthersItem.Click += (_, _) => CloseOtherTabs(tab);
+
+        MenuItem closeRightItem = new() { Header = "Close Tabs to the Right" };
+        closeRightItem.Click += (_, _) => CloseTabsToTheRight(tab);
+
+        ContextMenu menu = new()
+        {
+            Items =
+            {
+                renameItem,
+                duplicateItem,
+                new Separator(),
+                closeItem,
+                closeOthersItem,
+                closeRightItem,
+            },
+        };
+
+        menu.Opening += (_, _) =>
+        {
+            closeOthersItem.IsEnabled = _tabs.Count > 1;
+            closeRightItem.IsEnabled = _tabs.IndexOf(tab) < _tabs.Count - 1;
+        };
+
+        return menu;
+    }
+
+    /// <summary>
+    /// Opens a new tab with the same profile and working directory as the
+    /// given tab (Windows Terminal "Duplicate tab").
+    /// </summary>
+    private void DuplicateTab(TerminalTab tab)
+    {
+        TerminalControl? leaf = tab.LeafControls.Count > 0 ? tab.LeafControls[0] : tab.Control as TerminalControl;
+        TerminalSessionProfile? profile = null;
+        if (leaf is not null && _launchConfigurations.TryGetValue(leaf, out TerminalLaunchConfiguration configuration))
+        {
+            profile = configuration.Profile;
+        }
+
+        if (profile is not null &&
+            NormalizeOptional(tab.WorkingDirectory) is { } workingDirectory &&
+            string.Equals(profile.Transport.TransportId, TerminalTransportIds.Pty, StringComparison.Ordinal))
+        {
+            profile = profile with
+            {
+                Transport = profile.Transport with
+                {
+                    Pty = profile.Transport.Pty with { WorkingDirectory = workingDirectory },
+                },
+            };
+        }
+
+        CreateNewTab(tab.ProfileId, titleOverride: null, launchProfileOverride: profile);
+    }
+
+    private void CloseOtherTabs(TerminalTab tab)
+    {
+        foreach (TerminalTab other in _tabs.ToArray())
+        {
+            if (!ReferenceEquals(other, tab))
+            {
+                CloseTab(other);
+            }
+        }
+    }
+
+    private void CloseTabsToTheRight(TerminalTab tab)
+    {
+        int index = _tabs.IndexOf(tab);
+        if (index < 0)
+        {
+            return;
+        }
+
+        foreach (TerminalTab other in _tabs.Skip(index + 1).ToArray())
+        {
+            CloseTab(other);
+        }
+    }
+
+    private TerminalTab? _zoomedTab;
+    private TerminalControl? _zoomedControl;
+    private Border? _zoomedLeafContainer;
+    private Control? _zoomedContent;
+    private Border? _zoomHost;
+
+    /// <summary>
+    /// Gets a value indicating whether a pane is currently zoomed.
+    /// </summary>
+    private bool IsPaneZoomed => _zoomedTab is not null;
+
+    /// <summary>
+    /// Toggles zoom for the active pane: the pane temporarily fills the whole
+    /// tab area while the split layout is preserved underneath
+    /// (Windows Terminal "togglePaneZoom").
+    /// </summary>
+    private void TogglePaneZoom()
+    {
+        if (IsPaneZoomed)
+        {
+            UnzoomPane(focusTerminal: true);
+            return;
+        }
+
+        TerminalTab? tab = GetActiveTab();
+        TerminalControl? control = GetActiveStandaloneControl();
+        if (tab is null || control is null || tab.LeafControls.Count <= 1)
+        {
+            UpdateStatus("Pane zoom needs a tab with more than one pane.");
+            return;
+        }
+
+        if (!_paneRuntimeNodes.TryGetValue(control, out TerminalPaneNode? node) ||
+            node.LeafContainer is not Border leafContainer ||
+            leafContainer.Child is not { } paneContent)
+        {
+            return;
+        }
+
+        leafContainer.Child = null;
+        Border zoomHost = new()
+        {
+            Child = paneContent,
+        };
+        zoomHost.Classes.Add("terminalPane");
+        zoomHost.Classes.Add("activePane");
+
+        tab.Container.IsVisible = false;
+        _terminalHost.Children.Add(zoomHost);
+
+        _zoomedTab = tab;
+        _zoomedControl = control;
+        _zoomedLeafContainer = leafContainer;
+        _zoomedContent = paneContent;
+        _zoomHost = zoomHost;
+
+        UpdateStatus("Pane zoomed. Toggle again to restore the split layout.");
+        AppendEventLog($"[{tab.Title}] Pane zoomed.");
+        Dispatcher.UIThread.Post(() => control.Focus(), DispatcherPriority.Input);
+    }
+
+    /// <summary>
+    /// Restores the zoomed pane into its split layout slot, if any.
+    /// </summary>
+    private void UnzoomPane(bool focusTerminal)
+    {
+        if (!IsPaneZoomed)
+        {
+            return;
+        }
+
+        TerminalTab zoomedTab = _zoomedTab!;
+        TerminalControl? zoomedControl = _zoomedControl;
+
+        if (_zoomHost is not null)
+        {
+            _zoomHost.Child = null;
+            _terminalHost.Children.Remove(_zoomHost);
+        }
+
+        if (_zoomedLeafContainer is not null)
+        {
+            _zoomedLeafContainer.Child = _zoomedContent;
+        }
+
+        _zoomedTab = null;
+        _zoomedControl = null;
+        _zoomedLeafContainer = null;
+        _zoomedContent = null;
+        _zoomHost = null;
+
+        if (ReferenceEquals(GetActiveTab(), zoomedTab))
+        {
+            zoomedTab.Container.IsVisible = true;
+            if (focusTerminal && zoomedControl is not null)
+            {
+                Dispatcher.UIThread.Post(() => zoomedControl.Focus(), DispatcherPriority.Input);
+            }
+        }
+
+        AppendEventLog($"[{zoomedTab.Title}] Pane zoom restored.");
+    }
+
+    private void DuplicateActiveTab()
+    {
+        if (GetActiveTab() is { } tab)
+        {
+            DuplicateTab(tab);
+        }
+    }
+
+    /// <summary>
+    /// Splits the active pane along its longer axis
+    /// (Windows Terminal "splitPane auto", Alt+Shift+D).
+    /// </summary>
+    private void SplitActivePaneAuto()
+    {
+        UnzoomPane(focusTerminal: false);
+        TerminalControl? control = GetActiveStandaloneControl();
+        Rect bounds = control is not null &&
+            _paneRuntimeNodes.TryGetValue(control, out TerminalPaneNode? node) &&
+            node.LeafContainer is { } container
+                ? container.Bounds
+                : default;
+        TerminalPaneSplitRequest request = bounds.Width >= bounds.Height
+            ? TerminalPaneSplitRequest.Right
+            : TerminalPaneSplitRequest.Down;
+        SplitActivePane(request);
+    }
+
+    /// <summary>
+    /// Closes the active pane, or the whole tab when it hosts a single pane
+    /// (Windows Terminal "closePane", Ctrl+Shift+W).
+    /// </summary>
+    private void ClosePaneOrTab()
+    {
+        UnzoomPane(focusTerminal: false);
+        TerminalTab? tab = GetActiveTab();
+        if (tab is null)
+        {
+            return;
+        }
+
+        if (tab.LeafControls.Count > 1)
+        {
+            CloseCurrentPane();
+        }
+        else
+        {
+            CloseTab(tab);
+        }
+    }
+
     private static Geometry ResolveDismissRegularIconGeometry()
     {
         if (Application.Current?.Resources.TryGetResource(DismissRegularIconResourceKey, null, out object? resource) == true &&
@@ -3738,6 +4224,11 @@ internal sealed class MainWindowController
             return;
         }
 
+        if (ReferenceEquals(_zoomedTab, tab))
+        {
+            UnzoomPane(focusTerminal: false);
+        }
+
         _tabs.Remove(tab);
 
         _terminalHost.Children.Remove(tab.Container);
@@ -3776,6 +4267,11 @@ internal sealed class MainWindowController
         if (index < 0 || index >= _tabs.Count)
         {
             return;
+        }
+
+        if (IsPaneZoomed && !ReferenceEquals(_zoomedTab, _tabs[index]))
+        {
+            UnzoomPane(focusTerminal: false);
         }
 
         TerminalTab target = _tabs[index];
@@ -7059,9 +7555,26 @@ internal sealed class MainWindowController
         public bool IsDeferredWorkspaceTab => DeferredWorkspaceTab is not null && RootPaneNode is null;
         public string Title => TitleText.Text ?? $"Terminal {Index}";
 
+        /// <summary>
+        /// Gets a value indicating whether the user renamed this tab explicitly.
+        /// Custom titles are not overwritten by terminal (OSC) title updates.
+        /// </summary>
+        public bool HasCustomTitle { get; private set; }
+
         public void UpdateTitle(string title)
         {
             TitleText.Text = title;
+        }
+
+        public void SetCustomTitle(string title)
+        {
+            HasCustomTitle = true;
+            TitleText.Text = title;
+        }
+
+        public void ClearCustomTitle()
+        {
+            HasCustomTitle = false;
         }
 
         public void SetModeName(string modeName)
