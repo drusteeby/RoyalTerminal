@@ -66,4 +66,10 @@ public sealed class MainWindowShellOptions
     /// for confirmation first.
     /// </summary>
     public bool ConfirmCloseAllTabs { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets whether the left tool rail starts visible. Terminal-first
+    /// hosts can start collapsed; View > Show Left Panel toggles it back.
+    /// </summary>
+    public bool ShowLeftPanelOnStartup { get; set; } = true;
 }

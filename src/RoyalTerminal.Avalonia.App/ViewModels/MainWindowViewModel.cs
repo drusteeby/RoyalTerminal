@@ -219,6 +219,7 @@ public sealed class MainWindowViewModel : ReactiveObject
         ArgumentNullException.ThrowIfNull(shellOptions);
 
         _showMacOsTitleBarLogos = shellOptions.ShowMacOsTitleBarLogos;
+        _isLeftPanelVisible = shellOptions.ShowLeftPanelOnStartup;
         _themePresets = _themeCatalog.Presets;
         InitializeModeThemes();
         _shaderSamples = TerminalShaderSampleCatalog.Options;
