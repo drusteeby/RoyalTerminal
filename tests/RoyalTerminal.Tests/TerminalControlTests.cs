@@ -6552,6 +6552,49 @@ public class TerminalControlTests
         }
     }
 
+    [AvaloniaFact]
+    public async Task Control_RapidPtyResizes_CoalesceToSingleTransportResize()
+    {
+        // Splitter/window drags fire a layout resize per tick; the PTY
+        // (SIGWINCH) notification must debounce to the trailing edge so the
+        // shell does not redraw its prompt at every intermediate width
+        // (repeated/jumbled text during pane resizing).
+        FakeTransport transport = new();
+        TerminalControl control = CreateControlWithTransport(
+            transport,
+            new DefaultVtProcessorFactory(),
+            VtProcessorPreference.Managed,
+            transportId: TerminalTransportIds.Pty);
+        control.Columns = 120;
+        control.Rows = 30;
+
+        try
+        {
+            await control.StartSessionAsync(new FakeTransportOptions(TerminalTransportIds.Pty));
+            int baseline = transport.Resizes.Count;
+
+            for (int columns = 119; columns >= 100; columns--)
+            {
+                control.Columns = columns;
+                Dispatcher.UIThread.RunJobs();
+            }
+
+            Assert.True(
+                transport.Resizes.Count - baseline <= 1,
+                $"Expected rapid resizes to coalesce, but transport saw {transport.Resizes.Count - baseline} resizes.");
+
+            bool flushed = await WaitUntilAsync(
+                () => transport.Resizes.Count > baseline &&
+                      transport.Resizes[^1].Columns == 100,
+                TimeSpan.FromSeconds(5));
+            Assert.True(flushed, "Expected the trailing-edge resize to reach the transport with the final size.");
+        }
+        finally
+        {
+            await HeadlessTerminalTestCleanup.CleanupControlAsync(control);
+        }
+    }
+
     private static TerminalControl CreateControlWithTransport(
         FakeTransport transport,
         IVtProcessorFactory vtProcessorFactory,

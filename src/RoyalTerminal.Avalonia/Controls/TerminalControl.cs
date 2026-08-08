@@ -2032,8 +2032,13 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
 
     private bool ShouldDebounceWindowsPtyTransportResize()
     {
-        return OperatingSystem.IsWindows() &&
-               TerminalSessionService.HasActiveTransport &&
+        // Debounce PTY resizes on every platform: without it, dragging a
+        // pane splitter (or live window resize) fires a SIGWINCH per layout
+        // tick, and the shell's per-signal prompt redraw interleaves with
+        // reflow at each intermediate width, leaving repeated/jumbled lines.
+        // The screen model still resizes immediately for visual continuity;
+        // only the session/PTY notification coalesces to the trailing edge.
+        return TerminalSessionService.HasActiveTransport &&
                string.Equals(_activeTransportId, TerminalTransportIds.Pty, StringComparison.Ordinal);
     }
 
