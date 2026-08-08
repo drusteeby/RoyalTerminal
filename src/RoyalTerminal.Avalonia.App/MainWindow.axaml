@@ -20,6 +20,7 @@
   <Window.KeyBindings>
     <KeyBinding Gesture="Ctrl+T" Command="{Binding NewTabCommand}" />
     <KeyBinding Gesture="Ctrl+Shift+T" Command="{Binding NewTabCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+N" Command="{Binding NewWindowCommand}" />
     <KeyBinding Gesture="Ctrl+W" Command="{Binding CloseCurrentTabCommand}" />
     <KeyBinding Gesture="Ctrl+Shift+W" Command="{Binding ClosePaneOrTabCommand}" />
     <KeyBinding Gesture="Ctrl+Shift+D" Command="{Binding DuplicateTabCommand}" />
@@ -69,6 +70,9 @@
             <NativeMenuItem Header="_New Tab (Default Profile)"
                             Command="{Binding NewTabCommand}"
                             Gesture="Ctrl+T" />
+            <NativeMenuItem Header="New _Window"
+                            Command="{Binding NewWindowCommand}"
+                            Gesture="Ctrl+Shift+N" />
             <NativeMenuItem Header="New Tab from _Profile"
                             IsEnabled="{Binding HasMultipleNonDefaultShellProfiles}">
               <NativeMenuItem.Menu>

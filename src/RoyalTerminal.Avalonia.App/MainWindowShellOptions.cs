@@ -48,4 +48,22 @@ public sealed class MainWindowShellOptions
     /// catalog. When null, the platform default store is used.
     /// </summary>
     public ITerminalSessionProfileStore? SessionProfileStore { get; set; }
+
+    /// <summary>
+    /// Gets or sets host-supplied keybindings. When set, they replace the
+    /// built-in window keybindings entirely.
+    /// </summary>
+    public IReadOnlyList<ShellKeybinding>? Keybindings { get; set; }
+
+    /// <summary>
+    /// Gets or sets the factory invoked by the "new window" action. Null
+    /// disables the action.
+    /// </summary>
+    public Action? NewWindowFactory { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether closing a window that hosts multiple tabs asks
+    /// for confirmation first.
+    /// </summary>
+    public bool ConfirmCloseAllTabs { get; set; } = true;
 }

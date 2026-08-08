@@ -1351,7 +1351,8 @@ public class MainWindowViewModelFlowTests
             Assert.True(topSearchPanel.IsVisible);
             Assert.DoesNotContain(topSearchBox.KeyBindings, keyBinding => keyBinding.Gesture?.Key == Key.Enter);
             Assert.True(tabStripLayout.ClipToBounds);
-            Assert.Equal(4, tabStripLayout.ColumnDefinitions.Count);
+            // Columns: scroll-left, tab scroller, scroll-right, new-tab, profile dropdown.
+            Assert.Equal(5, tabStripLayout.ColumnDefinitions.Count);
             Assert.Empty(topCommandBar.Children.OfType<ScrollViewer>());
             Assert.Equal(ScrollBarVisibility.Auto, tabStripScrollViewer.HorizontalScrollBarVisibility);
             Assert.Equal(ScrollBarVisibility.Disabled, tabStripScrollViewer.VerticalScrollBarVisibility);
@@ -1366,7 +1367,9 @@ public class MainWindowViewModelFlowTests
             Assert.Same(topSearchPanel, topSearchBox.Parent);
             Assert.Contains("searchField", topSearchBox.Classes);
             Assert.Equal(104d, topSearchBox.MinWidth);
-            Assert.Equal(new Thickness(0, 0, 12, 0), topSearchPanel.Margin);
+            // The search panel now floats over the terminal content area, so
+            // it no longer carries the title-bar right margin.
+            Assert.Equal(new Thickness(0, 0, 0, 0), topSearchPanel.Margin);
             Assert.Equal(VerticalAlignment.Center, topSearchBox.VerticalContentAlignment);
             Assert.Equal(new Thickness(6, 3), topSearchBox.Padding);
             Assert.Same(topSearchLeftContent, topSearchBox.InnerLeftContent);
@@ -1480,13 +1483,15 @@ public class MainWindowViewModelFlowTests
             Assert.Equal(HorizontalAlignment.Right, topSearchPanel.HorizontalAlignment);
             Assert.Equal(624d, topSearchPanel.MaxWidth);
             Assert.Equal(104d, topSearchBox.MinWidth);
-            Assert.Equal(new Thickness(0, 0, 12, 0), topSearchPanel.Margin);
+            // The find bar now floats over the terminal content area inside
+            // the SearchOverlayContainer border (Windows Terminal-style).
+            Border searchOverlay = FindShellControl<Border>(window, "SearchOverlayContainer")
+                ?? throw new InvalidOperationException("SearchOverlayContainer was not found.");
+            Assert.Equal(HorizontalAlignment.Right, searchOverlay.HorizontalAlignment);
+            Assert.Equal(VerticalAlignment.Top, searchOverlay.VerticalAlignment);
             Assert.True(
                 topSearchPanel.Bounds.Width <= topSearchPanel.MaxWidth + 0.5,
                 $"Expected search panel width to be capped. Search={topSearchPanel.Bounds}, MaxWidth={topSearchPanel.MaxWidth}.");
-            Assert.True(
-                Math.Abs(topSearchPanel.Bounds.Right - (topCommandBar.Bounds.Width - topSearchPanel.Margin.Right)) <= 0.5,
-                $"Expected search panel to keep its right margin from the command bar edge. Search={topSearchPanel.Bounds}, TopBar={topCommandBar.Bounds}.");
             Assert.True(
                 topSearchBox.Bounds.Width >= topSearchBox.MinWidth - 0.5,
                 $"Expected search input to keep its larger minimum width. SearchBox={topSearchBox.Bounds}, MinWidth={topSearchBox.MinWidth}.");

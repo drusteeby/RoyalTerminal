@@ -51,9 +51,15 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
         Icon = RoyalTerminalWindowIconHelper.CreateWindowIcon();
 
         ViewModel = new MainWindowViewModel(shellOptions);
+        ApplyHostKeybindings(shellOptions);
 
         this.WhenActivated(disposables =>
         {
+            disposables.Add(ViewModel!.NewWindowInteraction.RegisterHandler(context =>
+            {
+                shellOptions.NewWindowFactory?.Invoke();
+                context.SetOutput(System.Reactive.Unit.Default);
+            }));
             var backdropCoordinator = new MainWindowBackdropCoordinator(this, ViewModel!);
             var iconThemeCoordinator = new MainWindowIconThemeCoordinator(this);
             var systemAccentResourceCoordinator = new SystemAccentResourceCoordinator(this);
@@ -79,6 +85,26 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
     private void InitializeComponent()
     {
         AvaloniaXamlLoader.Load(this);
+    }
+
+    /// <summary>
+    /// Replaces the built-in window keybindings with host-supplied ones.
+    /// </summary>
+    private void ApplyHostKeybindings(MainWindowShellOptions shellOptions)
+    {
+        if (shellOptions.Keybindings is not { Count: > 0 } bindings || ViewModel is null)
+        {
+            return;
+        }
+
+        KeyBindings.Clear();
+        foreach (ShellKeybinding binding in bindings)
+        {
+            if (ShellKeybindingResolver.Resolve(binding, ViewModel) is { } keyBinding)
+            {
+                KeyBindings.Add(keyBinding);
+            }
+        }
     }
 
     private void ConfigurePlatformWindowDecorations()

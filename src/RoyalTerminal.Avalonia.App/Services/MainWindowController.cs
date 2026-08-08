@@ -216,6 +216,7 @@ internal sealed class MainWindowController
         _tabStrip.ItemsSource = _tabs;
         _tabStripNewTabButton = controlRoot.FindControl<Button>("TabStripNewTabButton")
             ?? throw new InvalidOperationException("TabStripNewTabButton was not found in MainWindow.");
+        ConfigureProfileMenuButton(controlRoot.FindControl<Button>("TabStripProfileMenuButton"));
         _topSearchBox = controlRoot.FindControl<TextBox>("TopSearchBox");
         _windowsCaptionButtonStrip = controlRoot.FindControl<StackPanel>("WindowsCaptionButtonStrip")
             ?? throw new InvalidOperationException("WindowsCaptionButtonStrip was not found in MainWindow.");
@@ -234,6 +235,8 @@ internal sealed class MainWindowController
     public IDisposable Activate()
     {
         CompositeDisposable lifetime = new();
+        _window.Closing += OnWindowClosingConfirmTabs;
+        lifetime.Add(Disposable.Create(() => _window.Closing -= OnWindowClosingConfirmTabs));
         RegisterCaptionButtonHandlers(lifetime);
         RegisterInteractionHandlers(lifetime);
         RegisterShellLayoutHandlers(lifetime);
@@ -2256,6 +2259,7 @@ internal sealed class MainWindowController
         _launchConfigurations[terminal] = launchConfiguration;
         ApplyLaunchLayoutSettings(terminal, launchProfile.Layout);
         ApplyLaunchAppearanceSettings(terminal, launchProfile.Appearance);
+        ApplyProfileSchemeTheme(terminal, launchProfile.Appearance);
         ApplyLaunchBehaviorSettings(terminal, launchProfile.Behavior);
         UpdateSessionLoggingSubscription(terminal);
         leafControls.Add(terminal);
@@ -2632,6 +2636,7 @@ internal sealed class MainWindowController
         _launchConfigurations[terminal] = launchConfiguration;
         ApplyLaunchLayoutSettings(terminal, launchProfile.Layout);
         ApplyLaunchAppearanceSettings(terminal, launchProfile.Appearance);
+        ApplyProfileSchemeTheme(terminal, launchProfile.Appearance);
         ApplyLaunchBehaviorSettings(terminal, launchProfile.Behavior);
         UpdateSessionLoggingSubscription(terminal);
 
@@ -3719,6 +3724,49 @@ internal sealed class MainWindowController
     private bool _dragReorderActive;
 
     /// <summary>
+    /// Attaches a profile flyout to the tab strip's chevron button
+    /// (Windows Terminal's new-tab profile dropdown). Items are rebuilt on
+    /// every open so the list always reflects the current profile catalog.
+    /// </summary>
+    private void ConfigureProfileMenuButton(Button? profileMenuButton)
+    {
+        if (profileMenuButton is null)
+        {
+            return;
+        }
+
+        MenuFlyout flyout = new()
+        {
+            Placement = PlacementMode.BottomEdgeAlignedRight,
+        };
+        flyout.Opening += (_, _) =>
+        {
+            flyout.Items.Clear();
+
+            // Configured profiles (session profile store, e.g. settings.json)
+            // first — Windows Terminal's dropdown ordering — then discovered
+            // system shells.
+            foreach (SessionLaunchOption option in _viewModel.SessionLaunchOptions)
+            {
+                MenuItem item = new()
+                {
+                    Header = option.DisplayName,
+                    Command = _viewModel.LaunchSessionProfileCommand,
+                    CommandParameter = option,
+                };
+                ToolTip.SetTip(item, option.Subtitle);
+                flyout.Items.Add(item);
+            }
+
+            if (flyout.Items.Count == 0)
+            {
+                flyout.Items.Add(new MenuItem { Header = "No profiles", IsEnabled = false });
+            }
+        };
+        profileMenuButton.Flyout = flyout;
+    }
+
+    /// <summary>
     /// Wires mouse-centric tab header interactions: middle-click close,
     /// double-click rename, drag-to-reorder, and the tab context menu.
     /// </summary>
@@ -4112,6 +4160,83 @@ internal sealed class MainWindowController
         AppendEventLog($"[{zoomedTab.Title}] Pane zoom restored.");
     }
 
+    private bool _closeConfirmed;
+
+    /// <summary>
+    /// Asks for confirmation before closing a window that hosts multiple
+    /// tabs (Windows Terminal "confirmCloseAllTabs").
+    /// </summary>
+    private async void OnWindowClosingConfirmTabs(object? sender, WindowClosingEventArgs e)
+    {
+        if (_closeConfirmed || !_viewModel.ConfirmCloseAllTabs || _tabs.Count <= 1)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        bool confirmed = await ShowCloseConfirmationAsync(_tabs.Count);
+        if (confirmed)
+        {
+            _closeConfirmed = true;
+            _window.Close();
+        }
+    }
+
+    private async Task<bool> ShowCloseConfirmationAsync(int tabCount)
+    {
+        TaskCompletionSource<bool> completion = new();
+
+        Button closeAllButton = new()
+        {
+            Content = $"Close all ({tabCount} tabs)",
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        Button cancelButton = new()
+        {
+            Content = "Cancel",
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            IsCancel = true,
+        };
+
+        StackPanel buttons = new()
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        buttons.Children.Add(closeAllButton);
+        buttons.Children.Add(cancelButton);
+
+        StackPanel content = new()
+        {
+            Spacing = 16,
+            Margin = new Thickness(24),
+        };
+        content.Children.Add(new TextBlock
+        {
+            Text = $"Do you want to close all {tabCount} tabs?",
+            FontSize = 14,
+        });
+        content.Children.Add(buttons);
+
+        Window dialog = new()
+        {
+            Title = "Close all tabs?",
+            SizeToContent = SizeToContent.WidthAndHeight,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false,
+            Content = content,
+            ShowInTaskbar = false,
+        };
+
+        closeAllButton.Click += (_, _) => { completion.TrySetResult(true); dialog.Close(); };
+        cancelButton.Click += (_, _) => { completion.TrySetResult(false); dialog.Close(); };
+        dialog.Closed += (_, _) => completion.TrySetResult(false);
+
+        await dialog.ShowDialog(_window);
+        return await completion.Task;
+    }
+
     private void DuplicateActiveTab()
     {
         if (GetActiveTab() is { } tab)
@@ -4420,6 +4545,7 @@ internal sealed class MainWindowController
         _launchConfigurations[newControl] = newLaunchConfiguration;
         ApplyLaunchLayoutSettings(newControl, newLaunchConfiguration.Profile.Layout);
         ApplyLaunchAppearanceSettings(newControl, newLaunchConfiguration.Profile.Appearance);
+        ApplyProfileSchemeTheme(newControl, newLaunchConfiguration.Profile.Appearance);
         ApplyLaunchBehaviorSettings(newControl, newLaunchConfiguration.Profile.Behavior);
         UpdateSessionLoggingSubscription(newControl);
 
@@ -5656,6 +5782,23 @@ internal sealed class MainWindowController
         standalone.BackgroundOpacityEnabled = appearance.BackgroundOpacityEnabled;
         standalone.TextHighlightingMode = appearance.TextHighlightingMode;
         standalone.TextHighlightRules = BuildRuntimeTextHighlightRules(null, appearance);
+    }
+
+    /// <summary>
+    /// Applies a per-profile color scheme (theme preset) to a terminal,
+    /// leaving the shell theme untouched for profiles without one.
+    /// </summary>
+    private void ApplyProfileSchemeTheme(TerminalControl control, TerminalSessionAppearanceSettings appearance)
+    {
+        if (NormalizeOptional(appearance.ThemePresetId) is not { } presetId)
+        {
+            return;
+        }
+
+        if (_viewModel.TryCreatePresetTheme(presetId) is { } theme)
+        {
+            control.ApplyTheme(theme);
+        }
     }
 
     private static TerminalSessionAppearanceSettings BuildAppearanceSettingsFromControl(TerminalControl control)

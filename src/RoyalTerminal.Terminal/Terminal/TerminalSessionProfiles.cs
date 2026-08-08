@@ -255,6 +255,12 @@ public sealed record TerminalSessionAppearanceSettings
     /// Regex-based text highlighting rules.
     /// </summary>
     public List<TerminalSessionTextHighlightRule> TextHighlightRules { get; init; } = [];
+
+    /// <summary>
+    /// Optional theme preset id applied to terminals launched from this
+    /// profile (a per-profile color scheme). Null uses the shell theme.
+    /// </summary>
+    public string? ThemePresetId { get; init; }
 }
 
 /// <summary>

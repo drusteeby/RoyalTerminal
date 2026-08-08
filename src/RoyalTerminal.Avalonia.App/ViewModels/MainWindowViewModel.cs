@@ -302,6 +302,7 @@ public sealed class MainWindowViewModel : ReactiveObject
         DuplicateTabInteraction = new Interaction<Unit, Unit>();
         SplitPaneAutoInteraction = new Interaction<Unit, Unit>();
         ClosePaneOrTabInteraction = new Interaction<Unit, Unit>();
+        NewWindowInteraction = new Interaction<Unit, Unit>();
         AcceptSshHostKeyCommand = ReactiveCommand.Create(AcceptSshHostKeyPrompt);
         DeclineSshHostKeyCommand = ReactiveCommand.Create(DeclineSshHostKeyPrompt);
 
@@ -418,6 +419,9 @@ public sealed class MainWindowViewModel : ReactiveObject
             () => SplitPaneAutoInteraction.Handle(Unit.Default));
         ClosePaneOrTabCommand = ReactiveCommand.CreateFromObservable(
             () => ClosePaneOrTabInteraction.Handle(Unit.Default));
+        NewWindowCommand = ReactiveCommand.CreateFromObservable(
+            () => NewWindowInteraction.Handle(Unit.Default));
+        ConfirmCloseAllTabs = shellOptions.ConfirmCloseAllTabs;
 
         UpdateThemePresetButtonText();
     }
@@ -471,6 +475,13 @@ public sealed class MainWindowViewModel : ReactiveObject
     public Interaction<Unit, Unit> SplitPaneAutoInteraction { get; }
 
     public Interaction<Unit, Unit> ClosePaneOrTabInteraction { get; }
+
+    public Interaction<Unit, Unit> NewWindowInteraction { get; }
+
+    /// <summary>
+    /// Gets whether closing a window with multiple tabs asks for confirmation.
+    /// </summary>
+    internal bool ConfirmCloseAllTabs { get; }
 
     public ReactiveCommand<Unit, Unit> AcceptSshHostKeyCommand { get; }
     public ReactiveCommand<Unit, Unit> DeclineSshHostKeyCommand { get; }
@@ -553,6 +564,9 @@ public sealed class MainWindowViewModel : ReactiveObject
 
     /// <summary>Gets the command closing the active pane, or the tab when it is the last pane.</summary>
     public ReactiveCommand<Unit, Unit> ClosePaneOrTabCommand { get; }
+
+    /// <summary>Gets the command opening a new shell window via the host factory.</summary>
+    public ReactiveCommand<Unit, Unit> NewWindowCommand { get; }
 
     public TerminalSettingsPanelState SettingsPanelState => _settingsPanelState ??= new TerminalSettingsPanelState();
 
@@ -838,6 +852,23 @@ public sealed class MainWindowViewModel : ReactiveObject
     }
 
     internal TerminalTheme ActiveTheme => GetModeThemeState(_activeRenderMode).Theme;
+
+    /// <summary>
+    /// Creates the theme for a known preset id, or null when the preset does
+    /// not exist in the catalog. Used for per-profile color schemes.
+    /// </summary>
+    internal TerminalTheme? TryCreatePresetTheme(string presetId)
+    {
+        for (int i = 0; i < _themeCatalog.Presets.Count; i++)
+        {
+            if (string.Equals(_themeCatalog.Presets[i].Id, presetId, StringComparison.Ordinal))
+            {
+                return _themeCatalog.CreatePresetTheme(presetId, _activeRenderMode);
+            }
+        }
+
+        return null;
+    }
 
     public bool NativeVtAvailable
     {
