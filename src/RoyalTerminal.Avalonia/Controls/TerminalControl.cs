@@ -1740,8 +1740,78 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
 
     private void ApplyGridFromProperties()
     {
+        // Programmatic grid changes always apply immediately and drop any
+        // pending layout-driven coalesced resize.
+        CancelPendingLayoutGridResize();
         Size contentSize = GetTerminalContentSize(Bounds.Size);
         ApplyTerminalSize(Columns, Rows, contentSize.Width, contentSize.Height, raiseTerminalResized: true, invalidateMeasure: true);
+    }
+
+    private (int Columns, int Rows, Size ContentSize)? _pendingLayoutGridResize;
+    private DispatcherTimer? _layoutGridResizeTimer;
+    private long _lastLayoutGridApplyTimestamp;
+    private static readonly TimeSpan LayoutGridResizeDebounceInterval = TimeSpan.FromMilliseconds(90);
+    private static readonly TimeSpan LayoutGridResizeRapidWindow = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>
+    /// Rapid successive layout grid changes coalesce; isolated changes apply
+    /// immediately so ordinary resizes stay instant.
+    /// </summary>
+    private bool ShouldCoalesceLayoutGridResize()
+    {
+        // The reflow/redraw race needs a live shell reacting to SIGWINCH;
+        // without a session, resizes stay immediate (and tests deterministic).
+        if (!TerminalSessionService.HasActiveTransport && !HasPty)
+        {
+            return false;
+        }
+
+        if (_pendingLayoutGridResize is not null)
+        {
+            return true;
+        }
+
+        if (!_hasValidLayoutGrid || _lastLayoutGridApplyTimestamp == 0)
+        {
+            return false;
+        }
+
+        return Stopwatch.GetElapsedTime(_lastLayoutGridApplyTimestamp) < LayoutGridResizeRapidWindow;
+    }
+
+    private DispatcherTimer EnsureLayoutGridResizeTimer()
+    {
+        if (_layoutGridResizeTimer is not null)
+        {
+            return _layoutGridResizeTimer;
+        }
+
+        DispatcherTimer timer = new(DispatcherPriority.Input)
+        {
+            Interval = LayoutGridResizeDebounceInterval,
+        };
+        timer.Tick += (_, _) => FlushPendingLayoutGridResize();
+        _layoutGridResizeTimer = timer;
+        return timer;
+    }
+
+    private void FlushPendingLayoutGridResize()
+    {
+        _layoutGridResizeTimer?.Stop();
+        if (_pendingLayoutGridResize is not { } pending)
+        {
+            return;
+        }
+
+        _pendingLayoutGridResize = null;
+        _lastLayoutGridApplyTimestamp = Stopwatch.GetTimestamp();
+        ApplyGridFromLayout(pending.Columns, pending.Rows, pending.ContentSize);
+    }
+
+    private void CancelPendingLayoutGridResize()
+    {
+        _layoutGridResizeTimer?.Stop();
+        _pendingLayoutGridResize = null;
     }
 
     private void ApplyTerminalSize(
@@ -2088,6 +2158,10 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
             return;
         }
 
+        // A coalesced layout grid change must land before the session
+        // notification so input always reaches a settled terminal size.
+        FlushPendingLayoutGridResize();
+
         _transportResizeDebounceTimer?.Stop();
         if (_pendingTransportResize is not { } dimensions)
         {
@@ -2167,6 +2241,7 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
         base.OnDetachedFromVisualTree(e);
         _containingScrollViewer = null;
         CancelPendingTransportResize();
+        CancelPendingLayoutGridResize();
         StopMouseSelectionDrag();
         EnsureCursorBlinkTimerRunning(false);
         RestoreReservedAncestorKeyBindings();
@@ -2397,10 +2472,38 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
 
             if (newCols != Columns || newRows != Rows)
             {
-                ApplyGridFromLayout(newCols, newRows, contentRect.Size);
+                // Coalesce rapid layout-driven grid changes (splitter or
+                // window drags): the first change applies immediately, but
+                // while changes keep arriving the grid is frozen and a
+                // single resize+reflow (followed by the debounced PTY
+                // notification) runs at the trailing edge. Reflowing and
+                // signaling the shell at every intermediate width lets
+                // readline's redraw race the reflow and shred the prompt.
+                if (ShouldCoalesceLayoutGridResize())
+                {
+                    // Restart the trailing-edge timer only when the target
+                    // changes: layout passes can repeat with identical
+                    // bounds, and restarting on every pass would starve the
+                    // flush forever.
+                    (int, int, Size) target = (newCols, newRows, contentRect.Size);
+                    if (_pendingLayoutGridResize != target)
+                    {
+                        _pendingLayoutGridResize = target;
+                        DispatcherTimer timer = EnsureLayoutGridResizeTimer();
+                        timer.Stop();
+                        timer.Start();
+                    }
+                }
+                else
+                {
+                    CancelPendingLayoutGridResize();
+                    _lastLayoutGridApplyTimestamp = Stopwatch.GetTimestamp();
+                    ApplyGridFromLayout(newCols, newRows, contentRect.Size);
+                }
             }
             else
             {
+                CancelPendingLayoutGridResize();
                 ApplyTerminalSize(newCols, newRows, contentRect.Width, contentRect.Height, raiseTerminalResized: false, invalidateMeasure: false);
             }
         }
