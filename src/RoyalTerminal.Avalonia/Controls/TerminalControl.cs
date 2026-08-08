@@ -199,6 +199,13 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
         AvaloniaProperty.Register<TerminalControl, bool>(nameof(AutoScroll), true);
 
     /// <summary>
+    /// Defines the <see cref="EnableMiddleClickPaste"/> property. Defaults to
+    /// enabled on Linux, matching the platform's terminal paste convention.
+    /// </summary>
+    public static readonly StyledProperty<bool> EnableMiddleClickPasteProperty =
+        AvaloniaProperty.Register<TerminalControl, bool>(nameof(EnableMiddleClickPaste), OperatingSystem.IsLinux());
+
+    /// <summary>
     /// Whether terminal keyboard input scrolls the normal screen buffer back to the live bottom.
     /// </summary>
     public static readonly DirectProperty<TerminalControl, bool> ScrollToBottomOnInputProperty =
@@ -415,6 +422,16 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
     {
         get => GetValue(AutoScrollProperty);
         set => SetValue(AutoScrollProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets whether middle-click pastes the clipboard when the
+    /// running application is not consuming mouse input itself.
+    /// </summary>
+    public bool EnableMiddleClickPaste
+    {
+        get => GetValue(EnableMiddleClickPasteProperty);
+        set => SetValue(EnableMiddleClickPasteProperty, value);
     }
 
     /// <summary>
@@ -3382,6 +3399,17 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
                 Button: button,
                 Action: TerminalInputAction.Press,
                 Modifiers: ConvertTerminalModifiers(e.KeyModifiers)));
+        }
+
+        // Middle-click pastes when the application did not consume the event
+        // (Linux terminal convention).
+        if (button == TerminalMouseButton.Middle &&
+            EnableMiddleClickPaste &&
+            (!IsMouseReportingActiveForInput() || !pointerSent))
+        {
+            _ = PasteAsync();
+            e.Handled = true;
+            return;
         }
 
         // Start text selection on left click

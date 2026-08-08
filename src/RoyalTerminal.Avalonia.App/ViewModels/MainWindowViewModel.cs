@@ -195,7 +195,10 @@ public sealed class MainWindowViewModel : ReactiveObject
     /// </summary>
     /// <param name="shellOptions">The host-specific shell presentation options.</param>
     public MainWindowViewModel(MainWindowShellOptions shellOptions)
-        : this(TerminalModeResolver.Default, new TerminalThemeCatalog(), shellOptions)
+        : this(
+            TerminalModeResolver.Default,
+            new TerminalThemeCatalog(shellOptions?.AdditionalThemePresets, shellOptions?.DefaultThemePresetId),
+            shellOptions!)
     {
     }
 

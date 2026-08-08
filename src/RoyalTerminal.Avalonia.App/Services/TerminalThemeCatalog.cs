@@ -179,13 +179,56 @@ internal sealed class TerminalThemeCatalog : ITerminalThemeCatalog
         [TerminalRenderMode.RenderedAuto] = "ayu-mirage",
     };
 
-    public IReadOnlyList<TerminalThemePreset> Presets => s_presets;
+    private readonly IReadOnlyList<TerminalThemePreset> _presets;
+    private readonly IReadOnlyDictionary<string, string> _presetThemeText;
+    private readonly string? _defaultPresetId;
+
+    public TerminalThemeCatalog()
+        : this(additionalPresets: null, defaultPresetId: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a theme catalog merging host-supplied presets ahead of the
+    /// built-in presets, optionally overriding the default preset.
+    /// </summary>
+    public TerminalThemeCatalog(IReadOnlyList<ShellThemePreset>? additionalPresets, string? defaultPresetId)
+    {
+        if (additionalPresets is null || additionalPresets.Count == 0)
+        {
+            _presets = s_presets;
+            _presetThemeText = s_presetThemeText;
+        }
+        else
+        {
+            List<TerminalThemePreset> presets = new(additionalPresets.Count + s_presets.Count);
+            Dictionary<string, string> themeText = new(s_presetThemeText, StringComparer.Ordinal);
+            foreach (ShellThemePreset preset in additionalPresets)
+            {
+                if (string.IsNullOrWhiteSpace(preset.Id) || string.IsNullOrWhiteSpace(preset.ThemeText))
+                {
+                    continue;
+                }
+
+                presets.Add(new TerminalThemePreset(preset.Id, preset.DisplayName));
+                themeText[preset.Id] = preset.ThemeText;
+            }
+
+            presets.AddRange(s_presets);
+            _presets = presets;
+            _presetThemeText = themeText;
+        }
+
+        _defaultPresetId = string.IsNullOrWhiteSpace(defaultPresetId) ? null : defaultPresetId;
+    }
+
+    public IReadOnlyList<TerminalThemePreset> Presets => _presets;
 
     public TerminalThemePreset GetPreset(string presetId)
     {
-        for (int i = 0; i < s_presets.Count; i++)
+        for (int i = 0; i < _presets.Count; i++)
         {
-            TerminalThemePreset preset = s_presets[i];
+            TerminalThemePreset preset = _presets[i];
             if (string.Equals(preset.Id, presetId, StringComparison.Ordinal))
             {
                 return preset;
@@ -197,6 +240,17 @@ internal sealed class TerminalThemeCatalog : ITerminalThemeCatalog
 
     public TerminalThemePreset GetDefaultPreset(TerminalRenderMode mode)
     {
+        if (_defaultPresetId is not null)
+        {
+            for (int i = 0; i < _presets.Count; i++)
+            {
+                if (string.Equals(_presets[i].Id, _defaultPresetId, StringComparison.Ordinal))
+                {
+                    return _presets[i];
+                }
+            }
+        }
+
         if (s_modeDefaults.TryGetValue(mode, out string? presetId))
         {
             return GetPreset(presetId);
@@ -208,7 +262,7 @@ internal sealed class TerminalThemeCatalog : ITerminalThemeCatalog
     public TerminalTheme CreatePresetTheme(string presetId, TerminalRenderMode mode)
     {
         TerminalThemePreset preset = GetPreset(presetId);
-        if (!s_presetThemeText.TryGetValue(preset.Id, out string? payload))
+        if (!_presetThemeText.TryGetValue(preset.Id, out string? payload))
         {
             payload = s_presetThemeText["catppuccin-mocha"];
         }
