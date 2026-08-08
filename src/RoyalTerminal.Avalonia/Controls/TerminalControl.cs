@@ -89,8 +89,13 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
     private static readonly TimeSpan WindowsPtyTransportResizeDebounceInterval = TimeSpan.FromMilliseconds(75);
     // Managed VT parsing already yields in small UI batches, so draining at
     // Background priority avoids starvation without monopolizing the UI thread.
-    private static readonly DispatcherPriority ManagedPendingOutputDrainPriority = DispatcherPriority.Background;
-    private static readonly DispatcherPriority NativePendingOutputDrainPriority = DispatcherPriority.Background;
+    // Input priority instead of Background: background-priority drain slices
+    // only run when the dispatcher is idle, which under output floods means
+    // roughly one small slice per frame and caps throughput at a few MB/s.
+    // Input priority lets multiple bounded slices run per frame while keeping
+    // FIFO fairness with user input and letting render preempt.
+    private static readonly DispatcherPriority ManagedPendingOutputDrainPriority = DispatcherPriority.Input;
+    private static readonly DispatcherPriority NativePendingOutputDrainPriority = DispatcherPriority.Input;
     private static readonly TimeSpan SelectionAutoScrollInterval = TimeSpan.FromMilliseconds(SelectionAutoScrollSpeed);
     private static readonly long UrgentControlVtResponseSuppressionWindowTicks =
         (long)(TimeSpan.FromSeconds(1).TotalSeconds * Stopwatch.Frequency);
