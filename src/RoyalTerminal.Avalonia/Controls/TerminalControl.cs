@@ -91,7 +91,7 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
     // exactly one SIGWINCH at the trailing edge and the shell redraws its
     // prompt once. 120 ms comfortably outlasts frame-to-frame gaps without a
     // perceptible lag after the drag ends.
-    private static readonly TimeSpan WindowsPtyTransportResizeDebounceInterval = TimeSpan.FromMilliseconds(120);
+    private static readonly TimeSpan WindowsPtyTransportResizeDebounceInterval = TimeSpan.FromMilliseconds(250);
     // Managed VT parsing already yields in small UI batches, so draining at
     // Background priority avoids starvation without monopolizing the UI thread.
     // Input priority instead of Background: background-priority drain slices
@@ -2079,7 +2079,14 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
             return _transportResizeDebounceTimer;
         }
 
-        DispatcherTimer timer = new(DispatcherPriority.Input)
+        // Background priority: the debounce Tick must only fire when the
+        // dispatcher goes idle (the drag has stopped). Input priority fires
+        // BETWEEN layout passes during a continuous drag — when per-frame
+        // reflow work exceeds the interval — leaking a SIGWINCH at every
+        // intermediate width and shredding the shell's prompt. Idle priority
+        // is starvation-proof for this purpose precisely because a running
+        // drag keeps the dispatcher busy and holds the Tick off until it ends.
+        DispatcherTimer timer = new(DispatcherPriority.Background)
         {
             Interval = WindowsPtyTransportResizeDebounceInterval,
         };
