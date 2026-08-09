@@ -185,6 +185,100 @@ public sealed class TerminalInputAdapterTests
         await sessionService.StopSessionAsync(vtProcessor: null, onData, onExit);
     }
 
+    [Theory]
+    [InlineData(Key.OemQuestion, KeyModifiers.Shift, "?")] // Shift+/ -> ?
+    [InlineData(Key.D1, KeyModifiers.Shift, "!")]          // Shift+1 -> !
+    [InlineData(Key.A, KeyModifiers.Shift, "A")]           // Shift+a -> A
+    [InlineData(Key.A, KeyModifiers.None, "a")]            // a -> a
+    [InlineData(Key.OemQuestion, KeyModifiers.None, "/")]  // / -> /
+    public async Task HandleKeyDown_PrintableKey_DefersToTextInputWhichSendsResolvedCharacter(
+        Key key,
+        KeyModifiers modifiers,
+        string keySymbol)
+    {
+        // A printable key press must NOT be encoded from the key code (which
+        // would drop shift/AltGr resolution and emit the base symbol, e.g.
+        // Shift+/ -> "/"). It defers to the TextInput event, which carries the
+        // layout-resolved character (Shift+/ -> "?") and also enables IME
+        // composition.
+        DefaultTerminalInputAdapter adapter = new();
+        TerminalSessionService sessionService = new();
+        FakeTransport transport = new();
+        StaticTransportFactory factory = new(transport);
+        Action<byte[], int> onData = (_, _) => { };
+        Action<int> onExit = _ => { };
+
+        await sessionService.StartSessionAsync(
+            factory,
+            new FakeTransportOptions(TerminalTransportIds.Pipe),
+            vtProcessor: null,
+            onData,
+            onExit,
+            _ => { },
+            () => { },
+            _ => { });
+
+        KeyEventArgs keyEventArgs = new()
+        {
+            Key = key,
+            KeyModifiers = modifiers,
+            KeySymbol = keySymbol,
+        };
+
+        // Key-down defers (does not encode/send anything itself).
+        bool keyHandled = adapter.HandleKeyDown(keyEventArgs, sessionService, vtProcessor: null);
+        Assert.False(keyHandled);
+        Assert.Null(transport.LastInput);
+
+        // The paired TextInput event carries and sends the resolved character.
+        bool textHandled = adapter.HandleTextInput(new TextInputEventArgs { Text = keySymbol }, sessionService);
+        Assert.True(textHandled);
+        Assert.Equal(keySymbol, Encoding.UTF8.GetString(transport.LastInput!));
+
+        await sessionService.StopSessionAsync(vtProcessor: null, onData, onExit);
+    }
+
+    [Theory]
+    [InlineData(Key.C, KeyModifiers.Control, "c")]  // Ctrl+C must encode to 0x03, not send "c"
+    public async Task HandleKeyDown_ControlCombo_EncodesFromKeyCode(
+        Key key,
+        KeyModifiers modifiers,
+        string keySymbol)
+    {
+        DefaultTerminalInputAdapter adapter = new();
+        TerminalSessionService sessionService = new();
+        FakeTransport transport = new();
+        StaticTransportFactory factory = new(transport);
+        Action<byte[], int> onData = (_, _) => { };
+        Action<int> onExit = _ => { };
+
+        await sessionService.StartSessionAsync(
+            factory,
+            new FakeTransportOptions(TerminalTransportIds.Pipe),
+            vtProcessor: null,
+            onData,
+            onExit,
+            _ => { },
+            () => { },
+            _ => { });
+
+        KeyEventArgs keyEventArgs = new()
+        {
+            Key = key,
+            KeyModifiers = modifiers,
+            KeySymbol = keySymbol,
+        };
+
+        bool handled = adapter.HandleKeyDown(keyEventArgs, sessionService, vtProcessor: null);
+
+        Assert.True(handled);
+        Assert.NotNull(transport.LastInput);
+        // Ctrl+C is the ETX control byte, never the literal letter.
+        Assert.Equal(new byte[] { 0x03 }, transport.LastInput!);
+
+        await sessionService.StopSessionAsync(vtProcessor: null, onData, onExit);
+    }
+
     [Fact]
     public async Task HandleTextInput_WithActiveTransport_ReturnsTrueAndWritesInput()
     {

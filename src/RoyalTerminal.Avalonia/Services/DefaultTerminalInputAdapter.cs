@@ -76,8 +76,18 @@ public sealed class DefaultTerminalInputAdapter : ITerminalInputAdapter
                 return true;
             }
 
-            if (!ShouldPreferTextInputForKeyDown(e, modeState, kittyKeyboardFlags) &&
-                TrySendNativeKeySequence(
+            bool preferTextInput = ShouldPreferTextInputForKeyDown(e, modeState, kittyKeyboardFlags);
+            if (preferTextInput)
+            {
+                // Defer printable characters to the TextInput event, which
+                // carries the layout/AltGr/IME-resolved character (e.g.
+                // Shift+/ -> "?"). Encoding from the key code here would drop
+                // that resolution and emit the base symbol ("/"), so neither
+                // key encoder runs for these keys.
+                return false;
+            }
+
+            if (TrySendNativeKeySequence(
                     e,
                     sessionService,
                     vtProcessor,
@@ -294,23 +304,38 @@ public sealed class DefaultTerminalInputAdapter : ITerminalInputAdapter
         in TerminalModeState modeState,
         int kittyKeyboardFlags)
     {
-        if (string.IsNullOrEmpty(e.KeySymbol))
+        _ = modeState;
+        _ = kittyKeyboardFlags;
+
+        // Only a printable, layout-resolved character defers to text input.
+        // Keys with no symbol (arrows, function keys, Enter/Tab/Backspace) or
+        // a control-character symbol are encoded from the key code instead.
+        if (string.IsNullOrEmpty(e.KeySymbol) || IsControlText(e.KeySymbol))
         {
             return false;
         }
 
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Control) ||
-            e.KeyModifiers.HasFlag(KeyModifiers.Alt) ||
-            e.KeyModifiers.HasFlag(KeyModifiers.Meta))
+        // Ctrl/Alt/Meta combinations are terminal control sequences
+        // (Ctrl+C -> 0x03, Alt+x -> ESC x, …), not literal text. Shift alone
+        // (or no modifier) is a printable character and belongs to text input,
+        // regardless of whether the key code could also be encoded — encoding
+        // Shift+/ from the key code yields the base symbol "/" and loses the
+        // shift resolution.
+        return !e.KeyModifiers.HasFlag(KeyModifiers.Control) &&
+               !e.KeyModifiers.HasFlag(KeyModifiers.Alt) &&
+               !e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+    }
+
+    private static bool IsControlText(string keySymbol)
+    {
+        foreach (char c in keySymbol)
         {
-            return false;
+            if (!char.IsControl(c))
+            {
+                return false;
+            }
         }
 
-        return !TerminalKeySequenceEncoder.TryEncode(
-            e.Key,
-            e.KeyModifiers,
-            modeState,
-            kittyKeyboardFlags,
-            out _);
+        return true;
     }
 }

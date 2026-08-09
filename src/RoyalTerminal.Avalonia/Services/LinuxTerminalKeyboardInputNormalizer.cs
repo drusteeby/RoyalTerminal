@@ -7,4 +7,6 @@ namespace RoyalTerminal.Avalonia.Services;
 internal sealed class LinuxTerminalKeyboardInputNormalizer : DefaultTerminalKeyboardInputNormalizer
 {
     // X11/Wayland Level3/IME composition is expected to arrive as TextInput without Windows AltGr aliasing.
+    // Printable-character resolution (e.g. Shift+/ -> "?") is handled in the
+    // key-down encoder path via the resolved KeySymbol; see DefaultTerminalInputAdapter.
 }
