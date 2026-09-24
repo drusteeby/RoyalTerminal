@@ -700,7 +700,8 @@ internal sealed class MainWindowController
                 model => model.ReflowOnResize,
                 model => model.PreserveScrollbackOnRestart,
                 model => model.SixelGraphicsEnabled,
-                model => model.EnableLigatures)
+                model => model.EnableLigatures,
+                model => model.RightClickMode)
             .Subscribe(_ =>
             {
                 if (!_suppressRuntimeSettingPropagation)
@@ -7619,6 +7620,7 @@ internal sealed class MainWindowController
     {
         control.PasteSafetyPolicy = ParsePasteSafetyPolicy(behavior.PasteSafetyPolicy);
         control.ReflowOnResize = behavior.ReflowOnResize;
+        control.RightClickMode = _viewModel.RightClickMode;
         control.PreserveScrollbackOnSessionStart = _viewModel.PreserveScrollbackOnRestart;
         control.SixelGraphicsEnabled = behavior.SixelGraphicsEnabled;
         SkiaTerminalRenderer? renderer = control.Renderer;

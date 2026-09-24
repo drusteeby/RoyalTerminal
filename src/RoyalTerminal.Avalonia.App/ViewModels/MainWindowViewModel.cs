@@ -116,6 +116,7 @@ public sealed class MainWindowViewModel : ReactiveObject
     private bool _backspaceSendsControlH;
     private bool _enableTextShaping = true;
     private bool _reflowOnResize = true;
+    private TerminalRightClickMode _rightClickMode;
     private bool _preserveScrollbackOnRestart = true;
     private bool _sixelGraphicsEnabled = true;
     private bool _enableLigatures = true;
@@ -470,6 +471,7 @@ public sealed class MainWindowViewModel : ReactiveObject
         ToggleLinkHintsCommand = ReactiveCommand.CreateFromObservable(
             () => ToggleLinkHintsInteraction.Handle(Unit.Default));
         ConfirmCloseAllTabs = shellOptions.ConfirmCloseAllTabs;
+        _rightClickMode = shellOptions.RightClickMode;
         MoveTabToNewWindowFactory = shellOptions.MoveTabToNewWindowFactory;
         InitialProfileId = shellOptions.InitialProfileId;
         InitialWorkingDirectory = shellOptions.InitialWorkingDirectory;
@@ -1828,6 +1830,15 @@ public sealed class MainWindowViewModel : ReactiveObject
     {
         get => _reflowOnResize;
         set => this.RaiseAndSetIfChanged(ref _reflowOnResize, value);
+    }
+
+    /// <summary>
+    /// Gets or sets what the right mouse button does in every terminal pane.
+    /// </summary>
+    public TerminalRightClickMode RightClickMode
+    {
+        get => _rightClickMode;
+        set => this.RaiseAndSetIfChanged(ref _rightClickMode, value);
     }
 
     public bool PreserveScrollbackOnRestart

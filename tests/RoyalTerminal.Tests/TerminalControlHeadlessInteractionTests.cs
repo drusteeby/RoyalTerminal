@@ -1976,6 +1976,60 @@ public sealed class TerminalControlHeadlessInteractionTests
         }
     }
 
+    [AvaloniaTheory]
+    [InlineData(TerminalRightClickMode.ContextMenu, true, false)]
+    [InlineData(TerminalRightClickMode.Application, true, true)]
+    [InlineData(TerminalRightClickMode.Disabled, false, true)]
+    public async Task Headless_RightClick_HonorsRightClickMode(
+        TerminalRightClickMode mode,
+        bool expectMouseReport,
+        bool expectContextMenuSuppressed)
+    {
+        RecordingTextEndpoint endpoint = new();
+        TerminalControl control = new()
+        {
+            Width = 640,
+            Height = 400,
+            VtProcessorPreference = VtProcessorPreference.Managed,
+            RightClickMode = mode,
+        };
+        Window window = new()
+        {
+            Width = 640,
+            Height = 400,
+            Content = control,
+        };
+        window.Show();
+
+        try
+        {
+            await StabilizeWindowAsync(window, control);
+            control.AttachEndpoint(endpoint);
+            control.WriteOutput("\x1b[?1002h\x1b[?1006h"u8);
+            control.Focus();
+            Dispatcher.UIThread.RunJobs();
+
+            endpoint.Inputs.Clear();
+
+            Point point = await GetInteractionPointAsync(control, window);
+            RaiseRightClick(control, window, point);
+            Dispatcher.UIThread.RunJobs();
+
+            bool vtMouseSent = await WaitUntilAsync(
+                () => endpoint.Inputs.Any(IsMouseProtocolInput),
+                TimeSpan.FromMilliseconds(expectMouseReport ? 2000 : 300));
+            Assert.Equal(expectMouseReport, vtMouseSent);
+
+            ContextRequestedEventArgs contextRequest = new();
+            control.RaiseEvent(contextRequest);
+            Assert.Equal(expectContextMenuSuppressed, contextRequest.Handled);
+        }
+        finally
+        {
+            await CleanupWindowAsync(window, control.DetachEndpoint);
+        }
+    }
+
     [AvaloniaFact]
     public async Task Headless_FocusEvents_EncodeToAttachedEndpointTextPath_WhenNoInputSinkAndMode1004Enabled()
     {
@@ -3594,6 +3648,32 @@ public sealed class TerminalControlHeadlessInteractionTests
             KeyModifiers.None,
             new Vector(0, -1));
         control.RaiseEvent(wheel);
+    }
+
+    private static void RaiseRightClick(TerminalControl control, Window window, Point windowPoint)
+    {
+        Pointer pointer = new(id: 1, PointerType.Mouse, isPrimary: true);
+        ulong timestamp = (ulong)Environment.TickCount64;
+
+        control.RaiseEvent(new PointerPressedEventArgs(
+            control,
+            pointer,
+            window,
+            windowPoint,
+            timestamp++,
+            new PointerPointProperties(RawInputModifiers.RightMouseButton, PointerUpdateKind.RightButtonPressed),
+            KeyModifiers.None,
+            clickCount: 1));
+
+        control.RaiseEvent(new PointerReleasedEventArgs(
+            control,
+            pointer,
+            window,
+            windowPoint,
+            timestamp,
+            new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.RightButtonReleased),
+            KeyModifiers.None,
+            MouseButton.Right));
     }
 
     private static void RaiseMousePressReleaseSequence(

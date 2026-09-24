@@ -5,6 +5,7 @@
 namespace RoyalTerminal.Avalonia.App;
 
 using RoyalTerminal.Avalonia.App.Services;
+using RoyalTerminal.Avalonia.Controls;
 using RoyalTerminal.Terminal;
 
 /// <summary>
@@ -72,6 +73,13 @@ public sealed class MainWindowShellOptions
     /// hosts can start collapsed; View > Show Left Panel toggles it back.
     /// </summary>
     public bool ShowLeftPanelOnStartup { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets what the right mouse button does in terminal panes.
+    /// Hosts running a multiplexer can hand it to the application or turn
+    /// it off entirely.
+    /// </summary>
+    public TerminalRightClickMode RightClickMode { get; set; } = TerminalRightClickMode.ContextMenu;
 
     /// <summary>
     /// Gets or sets the action invoked by "open settings" (e.g. opening the

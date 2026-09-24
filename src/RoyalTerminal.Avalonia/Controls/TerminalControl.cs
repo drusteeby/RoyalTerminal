@@ -216,6 +216,12 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
         AvaloniaProperty.Register<TerminalControl, bool>(nameof(EnableMiddleClickPaste), OperatingSystem.IsLinux());
 
     /// <summary>
+    /// Defines the <see cref="RightClickMode"/> property.
+    /// </summary>
+    public static readonly StyledProperty<TerminalRightClickMode> RightClickModeProperty =
+        AvaloniaProperty.Register<TerminalControl, TerminalRightClickMode>(nameof(RightClickMode), TerminalRightClickMode.ContextMenu);
+
+    /// <summary>
     /// Whether terminal keyboard input scrolls the normal screen buffer back to the live bottom.
     /// </summary>
     public static readonly DirectProperty<TerminalControl, bool> ScrollToBottomOnInputProperty =
@@ -442,6 +448,16 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
     {
         get => GetValue(EnableMiddleClickPasteProperty);
         set => SetValue(EnableMiddleClickPasteProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets what the right mouse button does: open the context menu,
+    /// go only to the application, or nothing at all.
+    /// </summary>
+    public TerminalRightClickMode RightClickMode
+    {
+        get => GetValue(RightClickModeProperty);
+        set => SetValue(RightClickModeProperty, value);
     }
 
     /// <summary>
@@ -3428,6 +3444,17 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
         AddHandler(PointerMovedEvent, OnPointerMovedTunnel, RoutingStrategies.Tunnel, handledEventsToo: true);
         AddHandler(PointerReleasedEvent, OnPointerReleasedTunnel, RoutingStrategies.Tunnel, handledEventsToo: true);
         AddHandler(PointerWheelChangedEvent, OnPointerWheelChangedTunnel, RoutingStrategies.Tunnel, handledEventsToo: true);
+        AddHandler(ContextRequestedEvent, OnContextRequestedBubble, RoutingStrategies.Bubble);
+    }
+
+    private void OnContextRequestedBubble(object? sender, ContextRequestedEventArgs e)
+    {
+        _ = sender;
+        // Marking the request handled keeps an ancestor's ContextMenu closed.
+        if (RightClickMode != TerminalRightClickMode.ContextMenu)
+        {
+            e.Handled = true;
+        }
     }
 
     private void OnPointerPressedTunnel(object? sender, PointerPressedEventArgs e)
@@ -7576,6 +7603,18 @@ public class TerminalControl : TemplatedControl, ILogicalScrollable
 
     private bool SendPointerEvent(TerminalPointerEvent pointerEvent)
     {
+        if (RightClickMode == TerminalRightClickMode.Disabled &&
+            pointerEvent.Button == TerminalMouseButton.Right)
+        {
+            if (pointerEvent.Kind != TerminalPointerEventKind.Move)
+            {
+                return false;
+            }
+
+            // A right-drag still reports plain motion for any-event tracking.
+            pointerEvent = pointerEvent with { Button = TerminalMouseButton.None };
+        }
+
         ITerminalInputSink? inputSink = TerminalSessionService.InputSink;
         if (inputSink is not null)
         {

@@ -2172,7 +2172,13 @@ public sealed class GhosttyVtProcessor : IVtProcessor,
         _keyEvent.SetAction(MapKeyAction(request.Action));
         _keyEvent.SetKey(key);
         _keyEvent.SetModifiers(MapModifiers(request.Modifiers));
-        _keyEvent.SetConsumedModifiers(GhosttyVtNative.GhosttyVtMods.None);
+        // When Shift produced the event's text (Shift+8 -> "*"), the layout
+        // consumed it, as Ghostty's own apprt reports. Leaving it unconsumed
+        // makes the kitty encoder emit CSI 56;2u instead of "*", which
+        // multiplexers (herdr, etc.) then decode back to the base key "8".
+        _keyEvent.SetConsumedModifiers(IsShiftProducedText(request)
+            ? GhosttyVtNative.GhosttyVtMods.Shift
+            : GhosttyVtNative.GhosttyVtMods.None);
         _keyEvent.SetComposing(request.IsComposing);
         _keyEvent.SetText(request.Text);
         _keyEvent.SetUnshiftedCodepoint(TryGetUnshiftedCodepoint(request.KeyId, out uint codepoint) ? codepoint : 0);
@@ -2856,6 +2862,24 @@ public sealed class GhosttyVtProcessor : IVtProcessor,
         };
 
         return key != GhosttyVtNative.GhosttyVtKey.Unidentified;
+    }
+
+    private static bool IsShiftProducedText(in TerminalKeyEncodingRequest request)
+    {
+        if (!request.Modifiers.HasFlag(TerminalModifiers.Shift) || string.IsNullOrEmpty(request.Text))
+        {
+            return false;
+        }
+
+        foreach (char c in request.Text)
+        {
+            if (char.IsControl(c))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool TryGetUnshiftedCodepoint(string keyId, out uint codepoint)

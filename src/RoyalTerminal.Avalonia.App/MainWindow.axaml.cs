@@ -125,6 +125,18 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
     }
 
     /// <summary>
+    /// Changes what the right mouse button does in every terminal pane of
+    /// this window (e.g. after a settings hot-reload).
+    /// </summary>
+    public void ApplyRightClickMode(RoyalTerminal.Avalonia.Controls.TerminalRightClickMode mode)
+    {
+        if (ViewModel is not null)
+        {
+            ViewModel.RightClickMode = mode;
+        }
+    }
+
+    /// <summary>
     /// Replaces the window keybindings with the given host bindings. May be
     /// called again at runtime (e.g. after a settings hot-reload).
     /// </summary>
