@@ -53,6 +53,16 @@ public sealed class DefaultTerminalInputAdapter : ITerminalInputAdapter
         if (HasFallbackByteInputPath(sessionService))
         {
             int kittyKeyboardFlags = ResolveKittyKeyboardFlags(sessionService, vtProcessor);
+            if (ShouldDeferKittyTextKeyToTextInput(e, kittyKeyboardFlags))
+            {
+                // Under IBus (XMODIFIERS=@im=ibus) key-down arrives without a
+                // KeySymbol, so the kitty encoder sees Shift+8 with no text
+                // and emits CSI 56;2u, which multiplexers (herdr) decode back
+                // to "8". Unless the app asked for every key as an escape
+                // code, text keys are sent as text: wait for TextInput.
+                return false;
+            }
+
             if (ShouldPreferNativeKittyEncoder(kittyKeyboardFlags) &&
                 TrySendNativeKeySequence(
                     e,
@@ -286,6 +296,32 @@ public sealed class DefaultTerminalInputAdapter : ITerminalInputAdapter
     }
 
     private static bool ShouldPreferNativeKittyEncoder(int kittyKeyboardFlags) => kittyKeyboardFlags != 0;
+
+    private const int KittyReportAllKeysAsEscapeCodes = 8;
+
+    private static bool ShouldDeferKittyTextKeyToTextInput(KeyEventArgs e, int kittyKeyboardFlags)
+    {
+        if (kittyKeyboardFlags == 0 || (kittyKeyboardFlags & KittyReportAllKeysAsEscapeCodes) != 0)
+        {
+            return false;
+        }
+
+        // Ctrl/Alt/Meta chords stay with the kitty encoder (CSI u disambiguation).
+        if ((e.KeyModifiers & ~KeyModifiers.Shift) != KeyModifiers.None)
+        {
+            return false;
+        }
+
+        return IsTextProducingKey(e.Key);
+    }
+
+    private static bool IsTextProducingKey(Key key)
+    {
+        return key is (>= Key.A and <= Key.Z) or (>= Key.D0 and <= Key.D9)
+            or Key.OemSemicolon or Key.OemPlus or Key.OemComma or Key.OemMinus
+            or Key.OemPeriod or Key.OemQuestion or Key.OemTilde or Key.OemOpenBrackets
+            or Key.OemPipe or Key.OemCloseBrackets or Key.OemQuotes or Key.OemBackslash;
+    }
 
     private static bool ShouldUseWin32InputMode(in TerminalModeState modeState)
     {

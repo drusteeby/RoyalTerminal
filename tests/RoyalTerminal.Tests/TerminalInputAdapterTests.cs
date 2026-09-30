@@ -944,6 +944,85 @@ public sealed class TerminalInputAdapterTests
         await sessionService.StopSessionAsync(vtProcessor, onData, onExit);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    [InlineData(7)]
+    public async Task HandleKeyDown_WithKittyDisambiguationAndNoKeySymbol_DefersShiftedDigitToTextInput(int kittyFlags)
+    {
+        // IBus delivers key-down with no KeySymbol; the encoder would see
+        // Shift+8 without text and emit CSI 56;2u, which herdr reads as "8".
+        DefaultTerminalInputAdapter adapter = new(new LinuxTerminalKeyboardInputNormalizer());
+        TerminalSessionService sessionService = new();
+        FakeTransport transport = new();
+        StaticTransportFactory factory = new(transport);
+        FakeVtProcessor vtProcessor = new() { EncodedKeySequence = Encoding.ASCII.GetBytes("\u001b[56;2u") };
+        Action<byte[], int> onData = (_, _) => { };
+        Action<int> onExit = _ => { };
+
+        await sessionService.StartSessionAsync(
+            factory,
+            new FakeTransportOptions(TerminalTransportIds.Pipe),
+            vtProcessor,
+            onData,
+            onExit,
+            _ => { },
+            () => { },
+            _ => { });
+
+        vtProcessor.SetKittyKeyboardFlags(kittyFlags);
+
+        bool keyHandled = adapter.HandleKeyDown(
+            new KeyEventArgs { Key = Key.D8, KeyModifiers = KeyModifiers.Shift },
+            sessionService,
+            vtProcessor);
+
+        Assert.False(keyHandled);
+        Assert.Null(transport.LastInput);
+        Assert.Empty(vtProcessor.EncodedKeyRequests);
+
+        bool textHandled = adapter.HandleTextInput(new TextInputEventArgs { Text = "*" }, sessionService);
+
+        Assert.True(textHandled);
+        Assert.Equal("*", Encoding.UTF8.GetString(transport.LastInput!));
+
+        await sessionService.StopSessionAsync(vtProcessor, onData, onExit);
+    }
+
+    [Fact]
+    public async Task HandleKeyDown_WithKittyReportAllKeys_StillEncodesShiftedDigit()
+    {
+        DefaultTerminalInputAdapter adapter = new(new LinuxTerminalKeyboardInputNormalizer());
+        TerminalSessionService sessionService = new();
+        FakeTransport transport = new();
+        StaticTransportFactory factory = new(transport);
+        FakeVtProcessor vtProcessor = new() { EncodedKeySequence = Encoding.ASCII.GetBytes("\u001b[56;2u") };
+        Action<byte[], int> onData = (_, _) => { };
+        Action<int> onExit = _ => { };
+
+        await sessionService.StartSessionAsync(
+            factory,
+            new FakeTransportOptions(TerminalTransportIds.Pipe),
+            vtProcessor,
+            onData,
+            onExit,
+            _ => { },
+            () => { },
+            _ => { });
+
+        vtProcessor.SetKittyKeyboardFlags(9);
+
+        bool keyHandled = adapter.HandleKeyDown(
+            new KeyEventArgs { Key = Key.D8, KeyModifiers = KeyModifiers.Shift },
+            sessionService,
+            vtProcessor);
+
+        Assert.True(keyHandled);
+        Assert.Equal("\u001b[56;2u", Encoding.ASCII.GetString(transport.LastInput!));
+
+        await sessionService.StopSessionAsync(vtProcessor, onData, onExit);
+    }
+
     [Fact]
     public async Task HandleKeyDown_WithWindowsAltGrEuroWhenRightAltWasSwallowed_DefersToTextInput()
     {
